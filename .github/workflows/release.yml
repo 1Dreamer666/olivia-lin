@@ -1,0 +1,63 @@
+name: Release Build & Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller google-generativeai
+
+      - name: Build Onedir & Standalone EXE
+        run: |
+          cd BSide_Olivia_Lin
+          pyinstaller build/olivia.spec --noconfirm --clean
+          pyinstaller build/olivia_onefile.spec --noconfirm --clean --distpath dist-standalone
+
+      - name: Package Zip Archives
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "BSide_Olivia_Lin/dist/OliviaLetterBox/*" -DestinationPath "OliviaLetterBox-win-x64.zip" -CompressionLevel Optimal
+          Copy-Item "BSide_Olivia_Lin/dist-standalone/OliviaLetterBox.exe" -Destination "OliviaLetterBox.exe"
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## BSide · 林离的信箱 Windows 可执行程序与发布包
+
+            ### 资产说明：
+            - **`OliviaLetterBox.exe`**：单文件版独立可执行程序（随处双击单文件直接运行）。
+            - **`OliviaLetterBox-win-x64.zip`**：绿色便携目录压缩包（解压即用，启动快，对杀软友好，配置与记忆文件可在同级保存）。
+            - **`BSide_Olivia_Lin.zip`**：完整源码与 Skill 资源包。
+
+            ### 新特性：
+            - 记忆库软删除保护（标记为 DELETED，对 AI 与常规界面隐藏）。
+            - 清空与删除 3 秒长按确认（重大决策防误触）。
+            - 密码保护的后悔处（回收站，默认密码 123456），支持单选、多选与全选批量回归。
+          files: |
+            OliviaLetterBox.exe
+            OliviaLetterBox-win-x64.zip
+            BSide_Olivia_Lin.zip
+          draft: false
+          prerelease: false
