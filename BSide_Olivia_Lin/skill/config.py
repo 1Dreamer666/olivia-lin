@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ _PKG_ROOT = _PKG_DIR.parent                    # .../BSide_Olivia_Lin（默认 s
 DEFAULTS: dict[str, Any] = {
     "host": "0.0.0.0",
     "port": 8000,
+    "open_browser": True,
     # 包含 skill/、persona/、samples/ 的目录（"项目根"）。
     # "auto" = 本 skill 包的上级目录；可写相对/绝对路径。
     "skill_root": "auto",
@@ -37,6 +39,10 @@ DEFAULTS: dict[str, Any] = {
         "endpoint": "http://127.0.0.1:8045",
         "model": "gemini-2.5-flash",
         "timeout": 15,
+    },
+    "memory": {
+        "path": "auto",
+        "admin_password": "123456",
     },
     "reply": {
         "min_reading_ms": 3200,      # 前端"读信"最短等待（保留书信节奏感）
@@ -62,6 +68,8 @@ def _candidate_config_paths() -> list[Path]:
     env = os.environ.get("OLIVIA_CONFIG")
     if env:
         cands.append(Path(env).expanduser())
+    if getattr(sys, "frozen", False):
+        cands.append(Path(sys.executable).resolve().parent / "config.json")
     cands.append(_PKG_ROOT / "config.json")   # 项目自带配置
     cands.append(Path.cwd() / "config.json")  # 工作目录
     return cands
@@ -86,6 +94,41 @@ def load_config(reload: bool = False) -> tuple[dict, Path | None]:
             continue  # 损坏的配置按不存在处理
     _CONFIG_CACHE = (dict(DEFAULTS), None)
     return _CONFIG_CACHE
+
+
+def get_writable_config_path() -> Path:
+    """获取用于写入/持久化配置的目标路径。"""
+    env = os.environ.get("OLIVIA_CONFIG")
+    if env:
+        return Path(env).expanduser().resolve()
+    for cand in _candidate_config_paths():
+        if cand.is_file():
+            return cand.resolve()
+    if getattr(sys, "frozen", False):
+        return (Path(sys.executable).resolve().parent / "config.json").resolve()
+    return (_PKG_ROOT / "config.json").resolve()
+
+
+def save_config(new_data: dict) -> tuple[dict, Path]:
+    """合并并保存配置到磁盘，并刷新缓存。"""
+    target = get_writable_config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    current, _ = load_config(reload=True)
+    merged = _deep_merge(current, new_data)
+
+    target.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.environ["OLIVIA_CONFIG"] = str(target)
+    return load_config(reload=True)
+
+
+def reset_config() -> tuple[dict, Path]:
+    """重置为默认配置并保存。"""
+    target = get_writable_config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(DEFAULTS, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.environ["OLIVIA_CONFIG"] = str(target)
+    return load_config(reload=True)
 
 
 def _resolve_path(value: str, base: Path) -> Path:
@@ -119,11 +162,31 @@ def resolve_static_dir(cfg: dict | None = None, app_dir: Path | None = None) -> 
     if cfg is None:
         cfg, _ = load_config()
     value = cfg.get("static_dir", "auto")
-    if value in ("auto", "", None):
-        return (app_dir or (_PKG_ROOT / "app")) / "static"
-    _, cfg_file = load_config()
-    base = cfg_file.parent if cfg_file else Path.cwd()
-    return _resolve_path(str(value), base)
+    if value not in ("auto", "", None):
+        _, cfg_file = load_config()
+        base = cfg_file.parent if cfg_file else Path.cwd()
+        return _resolve_path(str(value), base)
+
+    # 自动探测各种布局（开发源码目录、PyInstaller onedir/onefile 目录等）
+    candidates: list[Path] = []
+    if app_dir:
+        candidates.extend([app_dir / "static", app_dir / "app" / "static"])
+    candidates.extend([
+        _PKG_ROOT / "app" / "static",
+        _PKG_ROOT / "static",
+    ])
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([
+            exe_dir / "_internal" / "app" / "static",
+            exe_dir / "_internal" / "static",
+            exe_dir / "static",
+            exe_dir / "app" / "static",
+        ])
+    for c in candidates:
+        if c.is_dir():
+            return c.resolve()
+    return (app_dir or (_PKG_ROOT / "app")) / "static"
 
 
 def reply_settings(cfg: dict | None = None) -> dict:

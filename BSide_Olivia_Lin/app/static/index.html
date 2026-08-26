@@ -35,6 +35,7 @@
       <button id="sound-toggle" class="iconbtn" title="环境音" aria-label="环境音">♪</button>
       <button id="theme-toggle" class="iconbtn" title="昼 / 夜" aria-label="昼夜切换">☾</button>
       <button id="history-toggle" class="iconbtn" title="信件存档" aria-label="信件存档">✉</button>
+      <button id="settings-toggle" class="iconbtn" title="系统设置" aria-label="系统设置">⚙</button>
     </div>
   </header>
 
@@ -116,12 +117,132 @@
   <!-- 信件存档抽屉 -->
   <aside id="history-drawer" class="drawer" aria-hidden="true">
     <div class="drawer-head">
-      <h2>信件存档 <button id="history-clear" class="ghostbtn sm">清空</button></h2>
+      <h2>信件存档 
+        <button id="history-clear" class="ghostbtn sm hold-btn" data-hold-ms="3000" title="长按3秒清空所有信件存档">
+          <span class="hold-progress"></span>
+          <span class="hold-label">清空 (长按3秒)</span>
+        </button>
+        <button id="history-regret-btn" class="ghostbtn sm accent-link" title="管理被删除的记忆与信件">后悔处 ⏳</button>
+      </h2>
       <button id="history-close" class="iconbtn" aria-label="关闭">×</button>
     </div>
     <ul id="history-list"></ul>
     <p id="history-empty" class="history-empty">还没有信件。写第一封吧。</p>
   </aside>
+
+  <!-- 系统设置抽屉 -->
+  <aside id="settings-drawer" class="drawer settings-drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h2>系统设置 <span id="cfg-mode-tag" class="cfg-tag"></span></h2>
+      <button id="settings-close" class="iconbtn" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="cfg-group">
+        <label class="cfg-label" for="cfg-endpoint">模型端点 (Endpoint)</label>
+        <input type="text" id="cfg-endpoint" class="cfg-input" placeholder="http://127.0.0.1:8045">
+        <span class="cfg-hint">本地模型服务地址、第三方代理或官方 API</span>
+      </div>
+
+      <div class="cfg-group">
+        <label class="cfg-label" for="cfg-apikey">API Key</label>
+        <input type="text" id="cfg-apikey" class="cfg-input" placeholder="test 或 Gemini API 密钥">
+        <span class="cfg-hint">本地空壳填 test，官方或代理端点填有效 Key</span>
+      </div>
+
+      <div class="cfg-row">
+        <div class="cfg-group flex-1">
+          <label class="cfg-label" for="cfg-model">模型名称 (Model)</label>
+          <input type="text" id="cfg-model" class="cfg-input" placeholder="gemini-2.5-flash">
+        </div>
+        <div class="cfg-group w-80">
+          <label class="cfg-label" for="cfg-timeout">超时 (s)</label>
+          <input type="number" id="cfg-timeout" class="cfg-input" min="1" max="120" placeholder="15">
+        </div>
+      </div>
+
+      <div class="cfg-divider"></div>
+
+      <div class="cfg-row">
+        <div class="cfg-group flex-1">
+          <label class="cfg-label" for="cfg-reading-ms">读信等待 (ms)</label>
+          <input type="number" id="cfg-reading-ms" class="cfg-input" min="500" max="20000" step="100" placeholder="3200">
+        </div>
+        <div class="cfg-group w-80">
+          <label class="cfg-label" for="cfg-daily-limit">每日上限</label>
+          <input type="number" id="cfg-daily-limit" class="cfg-input" min="1" max="99" placeholder="3">
+        </div>
+      </div>
+
+      <div class="cfg-info-box">
+        <div class="cfg-info-row">
+          <span class="cfg-info-k">配置落盘：</span>
+          <span class="cfg-info-v" id="cfg-file-path" title="">读取中…</span>
+        </div>
+        <div class="cfg-info-row">
+          <span class="cfg-info-k">记忆文件：</span>
+          <span class="cfg-info-v" id="cfg-memory-path" title="">读取中…</span>
+        </div>
+        <div class="cfg-info-row">
+          <span class="cfg-info-k">记忆状态：</span>
+          <span class="cfg-info-v" id="cfg-memory-stats">有效 0 封 · 已删 0 封</span>
+        </div>
+      </div>
+
+      <div class="cfg-actions">
+        <button id="cfg-save-btn" class="sendbtn full-width">保存并应用</button>
+        <div class="cfg-secondary-actions">
+          <button id="cfg-reset-btn" class="ghostbtn sm" title="重置为默认设置">恢复默认</button>
+          <button id="cfg-regret-btn" class="ghostbtn sm" title="查看被软删除的记忆并选择回归">后悔处 ⏳</button>
+          <button id="cfg-reset-mem-btn" class="ghostbtn sm text-danger hold-btn" data-hold-ms="3000" title="长按3秒软清空记忆库（标示为DELETED，可在后悔处恢复）">
+            <span class="hold-progress"></span>
+            <span class="hold-label">清空记忆库 (长按3秒)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 被删内容管理的后悔处（回收站）抽屉 -->
+  <aside id="regret-drawer" class="drawer regret-drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <h2>被删内容管理的后悔处 ⏳</h2>
+        <span class="drawer-sub">标记为 DELETED 的条目对 AI 及前端隐藏，在此可选择回归</span>
+      </div>
+      <button id="regret-close" class="iconbtn" aria-label="关闭">×</button>
+    </div>
+    <div class="regret-toolbar">
+      <label class="regret-select-all">
+        <input type="checkbox" id="regret-check-all">
+        <span>全选</span>
+      </label>
+      <div class="regret-actions">
+        <button id="regret-restore-selected" class="ghostbtn sm" disabled>回归选中 (0)</button>
+        <button id="regret-restore-all" class="ghostbtn sm">全部回归</button>
+      </div>
+    </div>
+    <ul id="regret-list" class="regret-list"></ul>
+    <p id="regret-empty" class="history-empty">后悔处空空如也，没有被删的记忆或信件。</p>
+  </aside>
+
+  <!-- 密码验证弹窗 -->
+  <div id="pwd-dialog" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 class="modal-title">进入后悔处 · 验证密码</h3>
+        <button id="pwd-close" class="iconbtn sm">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-tip">清空与删除记忆是重大决策。查看与恢复被删内容需验证管理密码（默认：123456）：</p>
+        <input type="password" id="admin-pwd-input" class="cfg-input modal-input" placeholder="请输入管理密码" autofocus autocomplete="current-password">
+        <p id="pwd-error" class="modal-err" hidden>密码错误，请重试</p>
+      </div>
+      <div class="modal-actions">
+        <button id="pwd-cancel-btn" class="ghostbtn">取消</button>
+        <button id="pwd-confirm-btn" class="sendbtn sm">验证并进入</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 飞行信封 -->
   <svg id="envelope" class="envelope" viewBox="0 0 120 84" aria-hidden="true">

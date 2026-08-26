@@ -51,10 +51,13 @@ _BOOT_ROOT = APP_DIR.parent
 # 是否由 PyInstaller 打包运行
 FROZEN = bool(getattr(sys, "frozen", False))
 if FROZEN:
-    # 资源根：onefile 临时解压目录 / onedir 基础目录
-    _RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", APP_DIR))
     # 可写根：exe 同级目录（用户可放 config.json / data/）
     _WRITABLE_ROOT = Path(sys.executable).resolve().parent
+    # 资源根：onefile 临时解压目录 或 onedir _internal 目录
+    _internal_dir = _WRITABLE_ROOT / "_internal"
+    _RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", _internal_dir if _internal_dir.is_dir() else _WRITABLE_ROOT))
+    _BOOT_ROOT = _RESOURCE_ROOT
+    APP_DIR = _RESOURCE_ROOT / "app"
 else:
     _RESOURCE_ROOT = _BOOT_ROOT
     _WRITABLE_ROOT = _BOOT_ROOT
@@ -260,16 +263,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _memory_payload(self) -> dict:
         try:
+            summary = memory_bank.get_summary()
             data = memory_bank.load()
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc), "path": memory_bank.resolve_memory_path()}
+            return {"ok": False, "error": str(exc), "path": str(memory_bank.resolve_memory_path())}
         return {
             "ok": True,
-            "path": str(memory_bank.resolve_memory_path()),
-            "total_letters": data.get("total_letters", 0),
+            "path": summary["path"],
+            "total_letters": summary["total_letters"],
+            "active_count": summary.get("active_count", 0),
+            "deleted_count": summary.get("deleted_count", 0),
             "first_letter": data.get("first_letter"),
-            "long_term": memory_bank.long_term(data),
-            "episodes": data.get("episodes", [])[-10:],   # 最近 10 条
+            "long_term": summary["long_term"],
+            "episodes": summary.get("recent_episodes", []),   # 最近有效 10 条
         }
 
     def do_GET(self) -> None:  # type: ignore
@@ -295,6 +301,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/memory":
             return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
                               "application/json; charset=utf-8")
+        if path == "/api/config":
+            current_cfg, cfg_file = skill_config.load_config()
+            payload = {
+                "ok": True,
+                "config": current_cfg,
+                "config_file": str(cfg_file) if cfg_file else str(skill_config.get_writable_config_path()),
+                "defaults": skill_config.DEFAULTS,
+                "frozen": FROZEN,
+                "model_status": model_client.status(),
+            }
+            return self._send(200, json.dumps(payload, ensure_ascii=False),
+                              "application/json; charset=utf-8")
         if path.startswith("/api/"):
             return self._send(404, json.dumps({"error": "Not found"}, ensure_ascii=False),
                               "application/json; charset=utf-8")
@@ -307,6 +325,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, fp.read_bytes(), MIME.get(fp.suffix, "application/octet-stream"))
 
     def do_POST(self) -> None:  # type: ignore
+        global _cfg, _cfg_file, REPLY_SETTINGS
         path = urlparse(self.path).path
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -327,12 +346,91 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/memory":
             try:
-                if bool(payload.get("reset")):
-                    memory_bank.reset()
+                action = str(payload.get("action") or "").strip()
+                if action == "verify_pwd":
+                    pwd = str(payload.get("password") or "")
+                    valid = memory_bank.verify_admin_password(pwd)
+                    return self._send(200 if valid else 401, json.dumps({
+                        "ok": valid,
+                        "error": "" if valid else "管理密码错误",
+                    }, ensure_ascii=False), "application/json; charset=utf-8")
+
+                if action == "list_deleted":
+                    pwd = str(payload.get("password") or "")
+                    if not memory_bank.verify_admin_password(pwd):
+                        return self._send(401, json.dumps({"ok": False, "error": "管理密码错误，无法进入后悔处"}, ensure_ascii=False),
+                                          "application/json; charset=utf-8")
+                    deleted_list = memory_bank.get_deleted_episodes()
+                    return self._send(200, json.dumps({
+                        "ok": True,
+                        "deleted": deleted_list,
+                        "count": len(deleted_list),
+                    }, ensure_ascii=False), "application/json; charset=utf-8")
+
+                if action == "restore":
+                    pwd = str(payload.get("password") or "")
+                    if not memory_bank.verify_admin_password(pwd):
+                        return self._send(401, json.dumps({"ok": False, "error": "管理密码错误，无法恢复被删内容"}, ensure_ascii=False),
+                                          "application/json; charset=utf-8")
+                    ids = payload.get("ids")
+                    restored_n = memory_bank.restore_episodes(ids)
+                    return self._send(200, json.dumps({
+                        "ok": True,
+                        "restored": restored_n,
+                        "memory": self._memory_payload(),
+                    }, ensure_ascii=False), "application/json; charset=utf-8")
+
+                if action == "soft_delete":
+                    ep_id = str(payload.get("id") or "").strip()
+                    if ep_id:
+                        memory_bank.soft_delete_episode(ep_id)
+                    return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
+                                      "application/json; charset=utf-8")
+
+                if bool(payload.get("reset")) or action in ("soft_delete_all", "reset"):
+                    memory_bank.soft_delete_all()
+                    return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
+                                      "application/json; charset=utf-8")
+
                 return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
                                   "application/json; charset=utf-8")
             except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
                 return self._send(500, json.dumps({"error": str(exc)}, ensure_ascii=False),
+                                  "application/json; charset=utf-8")
+
+        if path == "/api/config":
+            try:
+                _cfg, _cfg_file = skill_config.save_config(payload)
+                REPLY_SETTINGS = skill_config.reply_settings(_cfg)
+                st = model_client.reconfigure(_cfg)
+                return self._send(200, json.dumps({
+                    "ok": True,
+                    "config": _cfg,
+                    "config_file": str(_cfg_file),
+                    "reply": REPLY_SETTINGS,
+                    "model_status": st,
+                }, ensure_ascii=False), "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                return self._send(500, json.dumps({"error": f"保存配置失败: {exc}"}, ensure_ascii=False),
+                                  "application/json; charset=utf-8")
+
+        if path == "/api/config/reset":
+            try:
+                _cfg, _cfg_file = skill_config.reset_config()
+                REPLY_SETTINGS = skill_config.reply_settings(_cfg)
+                st = model_client.reconfigure(_cfg)
+                return self._send(200, json.dumps({
+                    "ok": True,
+                    "config": _cfg,
+                    "config_file": str(_cfg_file),
+                    "reply": REPLY_SETTINGS,
+                    "model_status": st,
+                }, ensure_ascii=False), "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                return self._send(500, json.dumps({"error": f"重置配置失败: {exc}"}, ensure_ascii=False),
                                   "application/json; charset=utf-8")
 
         return self._send(404, json.dumps({"error": "Not found"}, ensure_ascii=False),

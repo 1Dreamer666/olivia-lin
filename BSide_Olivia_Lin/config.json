@@ -13,7 +13,8 @@
     "timeout": 15
   },
   "memory": {
-    "path": "auto"
+    "path": "auto",
+    "admin_password": "123456"
   },
   "reply": {
     "min_reading_ms": 3200,

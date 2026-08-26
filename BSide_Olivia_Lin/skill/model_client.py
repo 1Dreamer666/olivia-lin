@@ -54,6 +54,40 @@ HOST = _u.hostname or "127.0.0.1"
 PORT = _u.port or 8045
 
 
+def reconfigure(cfg: dict | None = None) -> dict:
+    """动态热重载模型配置。"""
+    global API_KEY, ENDPOINT, MODEL, TIMEOUT, HOST, PORT, genai, GENAI_LOADED, GENAI_ERROR
+    if cfg is None:
+        cfg, _ = _skill_config.load_config(reload=True)
+    m = cfg.get("model", {})
+    API_KEY = os.environ.get("OLIVIA_API_KEY", str(m.get("api_key", "test")))
+    ENDPOINT = os.environ.get("OLIVIA_ENDPOINT", str(m.get("endpoint", "http://127.0.0.1:8045")))
+    MODEL = os.environ.get("OLIVIA_MODEL", str(m.get("model", "gemini-2.5-flash")))
+    TIMEOUT = float(os.environ.get("OLIVIA_TIMEOUT", m.get("timeout", 15)))
+
+    _u_new = urlparse(ENDPOINT)
+    HOST = _u_new.hostname or "127.0.0.1"
+    PORT = _u_new.port or 8045
+
+    try:
+        import google.generativeai as _genai
+
+        _genai.configure(
+            api_key=API_KEY,
+            transport='rest',
+            client_options={'api_endpoint': ENDPOINT}
+        )
+        genai = _genai
+        GENAI_LOADED = True
+        GENAI_ERROR = ""
+    except Exception as e:
+        genai = None
+        GENAI_LOADED = False
+        GENAI_ERROR = str(e)
+
+    return status()
+
+
 def model_available() -> bool:
     """端点是否可达（TCP 探活，0.8s 内）。"""
     try:

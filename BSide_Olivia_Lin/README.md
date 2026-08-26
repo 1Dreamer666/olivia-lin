@@ -186,12 +186,25 @@ immortal-skill（四维蒸馏 + 证据分级）、5 层 Persona 结构（Layer 0
 
 ```bash
 curl http://127.0.0.1:8000/api/memory
-# → {ok, path, total_letters, first_letter, long_term, episodes:[最近10条]}
+# → {ok, path, total_letters, active_count, deleted_count, long_term, episodes:[最近有效10条]}
 
-curl -X POST -H "Content-Type: application/json" -d '{"reset":true}' \
+# 清空记忆（软删除，标示为 DELETED，对 AI 与常规界面隐藏）
+curl -X POST -H "Content-Type: application/json" -d '{"action":"soft_delete_all"}' \
      http://127.0.0.1:8000/api/memory
-# → 清空记忆
+
+# 查看后悔处已删除列表（需管理密码，默认 123456）
+curl -X POST -H "Content-Type: application/json" -d '{"action":"list_deleted","password":"123456"}' \
+     http://127.0.0.1:8000/api/memory
+
+# 批量恢复/回归指定记忆
+curl -X POST -H "Content-Type: application/json" -d '{"action":"restore","password":"123456","ids":["ep_..."]}' \
+     http://127.0.0.1:8000/api/memory
 ```
+
+**软删除与后悔处机制（重大决策保护）：**
+- **3 秒长按防误触**：清空记忆库或删除信件属于重大决策，前端必须按住 3 秒（带进度环反馈）方可触发；
+- **标示 DELETED**：系统绝对不物理删除 `data/memory.json`，而是赋予 `status: "DELETED"`。被删条目对 AI 提示词与前端主界面完全隐藏；
+- **后悔处（被删内容管理）**：支持在后悔处输入管理密码（默认 `123456`，可在 `config.json` 的 `memory.admin_password` 修改）查看所有已删记忆，支持单选、多选与全选批量回归。
 
 **编辑记忆（这也是 FAQ#1 的答案）：**
 `data/memory.json` 是 UTF-8 的 JSON 文件，可直接打开编辑——改 topic 计数、改 mood、
