@@ -228,6 +228,12 @@ exe 运行特性：
 - 用户可编辑的 `config.json` / `data/memory.json` 放在 **exe 同级目录**（覆盖内置默认）；
 - 启动后默认自动打开浏览器（`open_browser: false` 或 `OLIVIA_BROWSER=0` 可关闭）。
 
+**如果 GitHub Actions 不可用（fork 默认禁用 / 沙箱里触发不到）**：
+- 在自己 Windows 机器上：克隆 → `build\build_exe.bat` → `dist\OliviaLetterBox\` 拿到 exe。
+- 在自己的 GitHub 账号：Settings → Actions → 勾 "Allow all actions and reusable workflows" → 重新 push 一次 → Run workflow。
+- 不想用 GitHub 也能用 `pyinstaller build/olivia.spec --noconfirm --clean` 直接在 Windows 上出包。
+- PyInstaller **不支持** Linux→Windows 交叉编译——必须用 Windows 或 windows-latest runner。
+
 ## 八、常见疑问（FAQ）
 
 **Q1. 我把 `skill/model_client.py` 里的 key / endpoint 改错了，但服务仍然能向"API"发请求，
