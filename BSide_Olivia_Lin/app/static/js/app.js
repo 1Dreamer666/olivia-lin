@@ -124,6 +124,8 @@ async function refreshStatus() {
       pill.classList.remove("ok");
       txt.textContent = "本地人格引擎 · 空壳待接入";
     }
+    const regenBtn = $("#regen-btn");
+    if (regenBtn) regenBtn.hidden = !s.model_up;
     refreshCounter();
   } catch {
     pill.classList.remove("ok");
@@ -234,19 +236,21 @@ function showReading(on) {
   }
 }
 
-async function sendLetter() {
-  if (state.sending) return;
+async function sendLetter(opts) {
+  if (state.sending) return false;
+  const force = (opts && opts.force) || "auto";
+  const replaceLast = !!(opts && opts.replaceLast);   // 重生成：覆盖最近一条
   const text = draft.value.trim();
   if (!text) {
     toast("先写点什么吧");
     myCard.classList.remove("shake");
     void myCard.offsetWidth;
     myCard.classList.add("shake");
-    return;
+    return false;
   }
-  if (!state.unlimited && sentToday() >= meta.dailyLimit) {
-    toast(`今天的 ${meta.dailyLimit} 封信已经寄出了。明天再写吧。（可开启“不限量”演示）`);
-    return;
+  if (force === "auto" && !state.unlimited && sentToday() >= meta.dailyLimit) {
+    toast(`今天的 ${meta.dailyLimit} 封信已经寄出了。明天再写吧。（可开启"不限量"演示）`);
+    return false;
   }
 
   setSending(true);
@@ -259,11 +263,13 @@ async function sendLetter() {
   void wax.offsetWidth;
   wax.classList.add("stamped");
 
-  const rect = sendBtn.getBoundingClientRect();
-  flyEnvelope(rect);
+  // 重生成时不飞信封，直接"翻页"
+  if (force !== "model" || !replaceLast) {
+    const rect = sendBtn.getBoundingClientRect();
+    flyEnvelope(rect);
+  }
 
-  // 等火漆 + 信封起飞的一部分时间，再开始"读信"
-  await sleep(750);
+  await sleep(force === "model" && replaceLast ? 80 : 750);
   showReading(true);
 
   const t0 = Date.now();
@@ -272,7 +278,7 @@ async function sendLetter() {
     const r = await fetch("/api/letter", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, force }),
     });
     data = await r.json();
     if (!r.ok) throw new Error(data.error || "信没寄出去");
@@ -280,7 +286,7 @@ async function sendLetter() {
     showReading(false);
     setSending(false);
     toast(e.message || "信没寄出去，请再试一次。");
-    return;
+    return false;
   }
 
   // 保留"书信的节奏感"：至少 meta.minReadingMs 的读信时间（来自 config.json）
@@ -296,19 +302,34 @@ async function sendLetter() {
     showWeather(data.weather, data.mood);
     startRain(!!(data.weather && data.weather.includes("雨")));
 
-    const item = {
-      id: Date.now().toString(36),
-      ts: new Date().toISOString(),
-      text,
-      reply: data.reply,
-      weather: data.weather,
-      mood: data.mood,
-      engine: data.engine,
-    };
-    state.history.push(item);
-    if (state.history.length > 60) state.history = state.history.slice(-60);
+    // 重生成：仅当 draft 与最后一条 history 的 text 完全一致时替换；否则追加
+    let replaced = false;
+    if (replaceLast && state.history.length) {
+      const last = state.history[state.history.length - 1];
+      if (last.text === text) {
+        last.ts = new Date().toISOString();
+        last.reply = data.reply;
+        last.weather = data.weather;
+        last.mood = data.mood;
+        last.engine = data.engine;
+        replaced = true;
+      }
+    }
+    if (!replaced) {
+      const item = {
+        id: Date.now().toString(36),
+        ts: new Date().toISOString(),
+        text,
+        reply: data.reply,
+        weather: data.weather,
+        mood: data.mood,
+        engine: data.engine,
+      };
+      state.history.push(item);
+      if (state.history.length > 60) state.history = state.history.slice(-60);
+      bumpSent();
+    }
     localStorage.setItem(LS.history, JSON.stringify(state.history));
-    bumpSent();
     refreshCounter();
     renderHistory();
 
@@ -324,6 +345,15 @@ async function sendLetter() {
   } finally {
     setSending(false); // 回信开始显现即解锁，不必等打字结束
   }
+  return true;
+}
+
+async function regenerateWithModel() {
+  if (state.sending) return;
+  const text = draft.value.trim();
+  if (!text) { toast("先写点什么，再让模型重写。"); return; }
+  const ok = await sendLetter({ force: "model", replaceLast: true });
+  if (ok) toast("已用模型重写这一封（覆盖了上一封的回复）");
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -587,7 +617,8 @@ function init() {
   refreshStatus();
 
   // 事件
-  sendBtn.addEventListener("click", sendLetter);
+  sendBtn.addEventListener("click", () => sendLetter());
+  $("#regen-btn").addEventListener("click", regenerateWithModel);
   draft.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendLetter(); }
   });

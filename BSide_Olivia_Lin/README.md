@@ -143,7 +143,118 @@ immortal-skill（四维蒸馏 + 证据分级）、5 层 Persona 结构（Layer 0
 纸墨双主题（昼/夜）、火漆封缄动画、信封飞行、打字机回信、WebAudio 环境音（无音频素材，
 全部实时合成）、本地信件存档（localStorage）、打印样式。
 
-## 七、资料来源（2026-08-26 检索）
+### 6.1 用模型重写（force=model）
+
+`POST /api/letter` 支持 `force` 字段：
+
+```json
+{"text": "今天的夕阳很好看", "force": "model"}   // 强制走模型
+{"text": "…",            "force": "local"}  // 强制走本地引擎
+{"text": "…"}                                  // 默认 auto：可达走模型，否则降级
+```
+
+- `force=model` 但模型端点不可达时，**直接返回 503**（不降级）——前端会弹 toast。
+- 模型的 system prompt 已自动注入「分级记忆」上下文（见 §六.2），让模型也能"记得"之前的信。
+- 写信按钮的右侧"用模型重写"按钮在 `/api/status` 显示模型可达时出现；点击会重新发一封
+  `force=model` 的请求，并用新回复**覆盖**最近一封存档（draft 与最后一条 text 相同时；
+  否则按新信追加）。这就是用户要的那条："把 API 返回的内容替换到本地引擎已有的信"。
+
+### 6.2 分级记忆（Hierarchical Memory）
+
+参考生产级 agent 记忆的三层共识：
+[Letta/MemGPT 的 core-recall-archival](https://github.com/letta-ai/letta)、
+[MemoryOS 的短期/中期/长期](https://github.com/MemTensor/MemOS)、
+[H-MEM 的分层索引与逐级摘要](https://arxiv.org/abs/2509.09630)、
+[Anatomy of Agentic Memory 的 4 类记忆结构](https://arxiv.org/abs/2508.06468)、
+[Agent_Memory_Techniques](https://github.com/GAIR-NLP/Agent-Memory-Techniques)（30 种技术合集）。
+落地为文件式（`data/memory.json`，零依赖、可人工编辑）：
+
+| 层 | 内容 | 容量 | 写入 |
+|---|---|---|---|
+| L1 工作记忆 | 当前来信 + 本轮回复 | 仅当轮 | 上下文（不落盘） |
+| L2 情景记忆 | episode 日志：ts / topics / weather / mood / engine / user_digest / reply_digest | 最近 30 条（旧的"遗忘"） | 每次寄信后自动 |
+| L3 长期记忆 | 长期画像：首信日期 / 累计 / 主题频率 / 近期情绪 / 关键事件 | 单条 JSON 摘要 | L2 写入时按频率+时近性"晋升" |
+
+**渲染与回声：**
+- 模型路径：`memory_bank.render_context()` 自动拼到 `loader.build_system_prompt(memory_context=…)`；
+  注入内容只引用已记下的事实，禁止编造。
+- 本地引擎：`memory_bank.memory_echo(exclude_digest=…)` 基于最近一封情景记忆
+  生成一句"回声"（按主题匹配），插进回信中段——所以"上次你说工作……"这种回声
+  在她手写时也会自然出现（不依赖模型）。
+
+**调用：**
+
+```bash
+curl http://127.0.0.1:8000/api/memory
+# → {ok, path, total_letters, first_letter, long_term, episodes:[最近10条]}
+
+curl -X POST -H "Content-Type: application/json" -d '{"reset":true}' \
+     http://127.0.0.1:8000/api/memory
+# → 清空记忆
+```
+
+**编辑记忆（这也是 FAQ#1 的答案）：**
+`data/memory.json` 是 UTF-8 的 JSON 文件，可直接打开编辑——改 topic 计数、改 mood、
+追加/删 episode。改完即生效（进程内 / 下次进程读盘时取到新内容）。
+frozen 模式（exe）下，记忆文件位于 **exe 同级 `data/memory.json`**（可备份、可在多台机器之间拷）。
+这种"能改文件"的设计让"把 API 返回的内容替换到本地引擎的信里"成为
+**改 `data/memory.json` 里的 `reply_digest` 字段** 这样的直接动作（前端"用模型重写"
+则是把"最近一封存档的 reply 字段直接覆写"的封装）。
+
+## 七、Windows EXE 与 Release
+
+通过 GitHub Actions（`windows-latest` 跑 `pyinstaller build/olivia.spec`）生成 onedir
+发布包；PyInstaller **不能**在 Linux 上交叉编译 Windows 可执行文件，因此本沙箱里直接
+build 不了，CI 才是真正产出 exe 的地方：
+
+```text
+.github/workflows/build-windows-exe.yml   # workflow_dispatch 触发
+build/olivia.spec                         # PyInstaller spec（onedir）
+build/build_exe.bat                       # Windows 本地一键打包（双击即跑）
+dist/OliviaLetterBox/                     # CI 产物（spec 运行后）
+OliviaLetterBox-win-x64.zip               # 压缩后的 Release 资产
+```
+
+本地打包（在你自己的 Windows 机器上）：
+
+```bat
+cd BSide_Olivia_Lin
+build\build_exe.bat
+REM 产物：dist\OliviaLetterBox\OliviaLetterBox.exe
+```
+
+exe 运行特性：
+- 资源（`app/static`、`persona`、`samples`、默认 `config.json`）打进 `sys._MEIPASS`，无需带额外文件；
+- 用户可编辑的 `config.json` / `data/memory.json` 放在 **exe 同级目录**（覆盖内置默认）；
+- 启动后默认自动打开浏览器（`open_browser: false` 或 `OLIVIA_BROWSER=0` 可关闭）。
+
+## 八、常见疑问（FAQ）
+
+**Q1. 我把 `skill/model_client.py` 里的 key / endpoint 改错了，但服务仍然能向"API"发请求，
+本地引擎也一直有回应——为什么？**
+- key 写错只影响"请求的鉴权头是否正确"，不会影响"端点是否可达"。
+  `model_client.model_available()` 用的是**TCP 探活**（`127.0.0.1:8045` 是否 listen），
+  不是真正发起鉴权调用——所以即便 key 是 `test` 或者乱写，只要端口开着，
+  probe 也会返回 `True`，进而去尝试 `ask_model()`。
+- "本地引擎"一直有回应 = **响应式空壳的设计**：模型端点不可达 / 调用失败
+  时 `handle_letter()` 自动降级到 `local_engine.respond()`，保证页面不会"没回音"。
+  这是有意的（你之前要求的"做一个响应式空壳即可"），不是 bug。
+- 你以为生效了但其实没生效？最常见原因是 **旧的 server 进程仍在内存里**——你编辑了
+  `model_client.py`，但没重启 `python app/server.py`，Python 进程加载的是旧版模块。
+  Python `__pycache__` 不会成为拦路虎：源文件 mtime/size 一变，.pyc 自动失效重编。
+  浏览器侧有 `Cache-Control: no-store`，也不存在缓存。
+- 真正"用文件接管"的方式：把 `data/memory.json` 里的 `reply_digest` / `topics` 改掉，
+  改的就是她"记得"的内容；也可以用前端"用模型重写"按钮一键把 API 的回复覆盖到最近一封存档上。
+
+**Q2. 信件之间没有上下文关联？** —— 现在 §六.2 加入了三级记忆：L2 滚动保存最近 30 封
+episodes，L3 按频率 / 时近性聚合出"长期画像"，并自动注入 system prompt（模型路径）
+或作为"回声"插入本地引擎回信中段。你也可以直接编辑 `data/memory.json` 强行注入"她该记得的事"。
+
+**Q3. 怎么打成 Windows exe / 怎么发 Release？** —— §七：在 GitHub 上手动跑一次
+Actions → build-windows-exe，下载 artifact，把 `OliviaLetterBox-win-x64.zip` 作为 Release 资产上传。
+或者在你自己的 Windows 机器上双击 `build\build_exe.bat` 本地重建。
+
+## 九、资料来源（2026-08-26 检索）
 
 - 《BSide: Olivia Lin》Steam 抢先体验报道：[IT之家](https://www.ithome.com/0/976/033.htm)、
   [3DM 官方介绍页](https://dl.3dmgame.com/pc/151263.html)、[百度百科](https://baike.baidu.com/item/BSide:Olivia%20Lin/68059713)
@@ -162,8 +273,15 @@ immortal-skill（四维蒸馏 + 证据分级）、5 层 Persona 结构（Layer 0
   [PersLLM (arXiv 2407.12393)](https://arxiv.org/html/2407.12393v2)、
   [PersonaLLM](https://www.emergentmind.com/topics/personallm)、
   [Modeling/Evaluating/Embodying Personality in LLMs (EMNLP 2025)](https://aclanthology.org/2025.findings-emnlp.506.pdf)
+- 分级记忆：
+  [Letta (MemGPT) 论文](https://arxiv.org/abs/2310.08560)、
+  [MemoryOS 论文](https://github.com/MemTensor/MemOS)、
+  [H-MEM (arXiv 2509.09630)](https://arxiv.org/abs/2509.09630)、
+  [Anatomy of Agentic Memory (arXiv 2508.06468)](https://arxiv.org/abs/2508.06468)、
+  [Agent-Memory-Techniques 30 法合集](https://github.com/GAIR-NLP/Agent-Memory-Techniques)、
+  [Mem0 长期记忆](https://github.com/mem0ai/mem0)
 
-## 八、伦理与合规
+## 十、伦理与合规
 
 林离（Olivia Lin）是米哈游旗下的**虚构角色 IP**。本项目为个人、非商业性质：
 在停服后复刻其书信陪伴功能，作为纪念与人格蒸馏方法的演示。

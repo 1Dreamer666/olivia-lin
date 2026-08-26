@@ -125,14 +125,20 @@ def _long_term(data: dict) -> dict:
             counts[t] = counts.get(t, 0) + 1
     top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:TOPICS_IN_PROMPT]
     dates = [e["date"] for e in eps if e.get("date")]
+    days_span = 0
+    if dates:
+        try:
+            days_span = 1 + (datetime.strptime(max(dates), "%Y-%m-%d")
+                             - datetime.strptime(min(dates), "%Y-%m-%d")).days
+        except (ValueError, TypeError):
+            days_span = 0
     return {
         "total_letters": int(data.get("total_letters") or 0),
         "first_letter": data.get("first_letter"),
         "top_topics": [{"topic": t, "count": n} for t, n in top],
         "recent_moods": [e.get("mood") for e in eps[-5:]],
         "last_weather": eps[-1].get("weather") if eps else None,
-        "days_span": (max(dates) and min(dates) and 1 + (datetime.strptime(max(dates), "%Y-%m-%d")
-                   - datetime.strptime(min(dates), "%Y-%m-%d")).days) or 0,
+        "days_span": days_span,
         "notables": data.get("notables", {}),
     }
 
@@ -145,6 +151,24 @@ def get_summary() -> dict:
         "long_term": _long_term(data),
         "recent_episodes": data.get("episodes", [])[-10:],
     }
+
+
+# ---- 兼容 server 的别名（与 get_summary 等价，方便外部按职责取数据） ----
+
+def load() -> dict:
+    """返回完整的记忆数据（episodes / total_letters / first_letter / notables …）。
+
+    写盘失败 / 缺失 / 损坏时返回空数据，不抛异常。
+    """
+    return _load()
+
+
+def total_letters() -> int:
+    return int(_load().get("total_letters") or 0)
+
+
+def long_term(data: dict | None = None) -> dict:
+    return _long_term(data if data is not None else _load())
 
 
 def reset() -> None:

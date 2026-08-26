@@ -297,8 +297,8 @@ def respond(text: str, now: datetime | None = None, memory_echo: str | None = No
 
     a = analyze(text)
 
-    # 首信（只是打招呼）
-    if a["greeting_only"] or (a["len"] <= 6 and a["topics"] == ["daily"]):
+    # 首信（只是打招呼，且没有回声——记忆库里有"过去"时，称呼她们之间已有过的来往）
+    if not memory_echo and (a["greeting_only"] or (a["len"] <= 6 and a["topics"] == ["daily"])):
         weather = rng.choice(["晴", "阴", "小雨"])
         return {
             "reply": FIRST.format(weather=WEATHER_LINE[weather][rng.randrange(len(WEATHER_LINE[weather]))]),
