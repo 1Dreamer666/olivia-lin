@@ -131,37 +131,32 @@ async function refreshStatus() {
 function typewrite(container, text, fast = false, onDone) {
   container.innerHTML = "";
   const paras = text.replace(/\r/g, "").split(/\n{2,}/);
-  let pi = 0, ci = 0, pEl = null, caret = null;
+  const caret = document.createElement("span");
+  caret.className = "caret";
+  let pi = 0, ci = 0, pEl = null;
 
-  const ensureCaret = () => {
-    if (!caret) {
-      caret = document.createElement("span");
-      caret.className = "caret";
-    }
-    if (caret.parentNode !== pEl || caret.nextSibling) pEl.appendChild(caret);
-  };
+  function ensurePara() {
+    if (pEl) return;
+    pEl = document.createElement("p");
+    if (paras[pi].trimStart().startsWith("—— ")) pEl.classList.add("sign");
+    container.appendChild(pEl);
+    pEl.appendChild(caret); // 光标始终是当前段落的子节点
+  }
 
   function step() {
     if (pi >= paras.length) {
-      if (caret) caret.remove();
+      if (caret.parentNode) caret.remove();
       onDone && onDone();
       return;
     }
     const para = paras[pi];
-    if (!pEl || pi !== pEl._pi) {
-      pEl = document.createElement("p");
-      pEl._pi = pi;
-      if (para.trimStart().startsWith("—— ")) pEl.classList.add("sign");
-      container.appendChild(pEl);
-    }
+    ensurePara();
     if (ci < para.length) {
-      const ch = para[ci];
-      caret && pEl.insertBefore(document.createTextNode(ch), caret);
-      ci++;
+      const ch = para[ci++];
+      pEl.insertBefore(document.createTextNode(ch), caret);
       let d = fast ? 4 : 16 + Math.random() * 30;
       if ("。！？…".includes(ch)) d += fast ? 40 : 240;
       else if ("，、；：”".includes(ch)) d += fast ? 20 : 100;
-      ensureCaret();
       setTimeout(step, d);
     } else {
       pi++;
@@ -171,7 +166,6 @@ function typewrite(container, text, fast = false, onDone) {
       setTimeout(step, fast ? 10 : 260);
     }
   }
-  ensureCaret();
   step();
 }
 
@@ -291,36 +285,39 @@ async function sendLetter() {
   showReading(false);
   wax.classList.add("faded");
 
-  // 她的信
-  $("#her-date").textContent = `${fmtDate()} ${fmtTime()}`;
-  showWeather(data.weather, data.mood);
-  startRain(!!(data.weather && data.weather.includes("雨")));
+  // 她的信（渲染层容错：任何异常都兜底直贴全文，并保证按钮解锁）
+  try {
+    $("#her-date").textContent = `${fmtDate()} ${fmtTime()}`;
+    showWeather(data.weather, data.mood);
+    startRain(!!(data.weather && data.weather.includes("雨")));
 
-  const item = {
-    id: Date.now().toString(36),
-    ts: new Date().toISOString(),
-    text,
-    reply: data.reply,
-    weather: data.weather,
-    mood: data.mood,
-    engine: data.engine,
-  };
-  state.history.push(item);
-  if (state.history.length > 60) state.history = state.history.slice(-60);
-  localStorage.setItem(LS.history, JSON.stringify(state.history));
-  bumpSent();
-  refreshCounter();
-  renderHistory();
+    const item = {
+      id: Date.now().toString(36),
+      ts: new Date().toISOString(),
+      text,
+      reply: data.reply,
+      weather: data.weather,
+      mood: data.mood,
+      engine: data.engine,
+    };
+    state.history.push(item);
+    if (state.history.length > 60) state.history = state.history.slice(-60);
+    localStorage.setItem(LS.history, JSON.stringify(state.history));
+    bumpSent();
+    refreshCounter();
+    renderHistory();
 
-  if (REDUCED) {
+    if (REDUCED) {
+      renderStatic(herBody, data.reply);
+    } else {
+      typewrite(herBody, data.reply, false, () => audio.chord());
+    }
+  } catch (err) {
+    console.error("回信渲染失败:", err);
     renderStatic(herBody, data.reply);
-    setSending(false);
-    audio.chord();
-  } else {
-    typewrite(herBody, data.reply, false, () => {
-      setSending(false);
-      audio.chord();
-    });
+    toast("回信显示出了点小状况，已直接贴出。");
+  } finally {
+    setSending(false); // 回信开始显现即解锁，不必等打字结束
   }
 }
 
