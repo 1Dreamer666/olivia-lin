@@ -284,8 +284,12 @@ def _mood_for(a: dict, weather: str) -> str:
     return "平静" if weather in ("阴", "小雨", "雨") else "平静"
 
 
-def respond(text: str, now: datetime | None = None) -> dict:
-    """输入一封来信，输出一封她的回信（降级引擎）。"""
+def respond(text: str, now: datetime | None = None, memory_echo: str | None = None) -> dict:
+    """输入一封来信，输出一封她的回信（降级引擎）。
+
+    memory_echo: 分级记忆（skill/memory_bank.py）生成的一句"回声"，
+    有值时插进回信中段——让她"记得"之前的信。
+    """
     now = now or datetime.now()
     text = re.sub(r"\s+", " ", text or "").strip()
     seed = hashlib.sha256(f"{text}|{now:%Y-%m-%d}".encode("utf-8")).hexdigest()
@@ -318,6 +322,10 @@ def respond(text: str, now: datetime | None = None) -> dict:
     q = pick_quote(text, rng)
     ack_bank = ACK_JOY if (a["joy"] >= 1 and a["sad"] == 0) else ACK
     parts.append(rng.choice(ack_bank).format(q=q) if q else rng.choice(ACK_NOQ))
+
+    # 分级记忆：一句对往信的回声（在回应之后、正文之前）
+    if memory_echo:
+        parts.append(memory_echo)
 
     primary = a["topics"][0]
     primary_body = BODY.get(primary, BODY["daily"])

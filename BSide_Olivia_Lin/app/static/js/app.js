@@ -91,7 +91,7 @@ function refreshCounter() {
   if (state.unlimited) {
     el.textContent = `今日已寄 ${sentToday()} 封 · 不限量（演示）`;
   } else {
-    el.textContent = `今日 ${sentToday()} / 3`;
+    el.textContent = `今日 ${sentToday()} / ${meta.dailyLimit}`;
   }
 }
 
@@ -105,7 +105,9 @@ function showWeather(weather, mood) {
   moodChip.textContent = mood ? `心情 · ${mood}` : "";
 }
 
-/* ---------------- 引擎状态 ---------------- */
+/* ---------------- 引擎状态（回信节奏参数也来自这里，不在前端写死） ---------------- */
+
+const meta = { minReadingMs: 3200, dailyLimit: 3 };
 
 async function refreshStatus() {
   const pill = $("#engine-pill");
@@ -113,6 +115,8 @@ async function refreshStatus() {
   try {
     const r = await fetch("/api/status");
     const s = await r.json();
+    if (s.reply && Number.isFinite(s.reply.min_reading_ms)) meta.minReadingMs = s.reply.min_reading_ms;
+    if (s.reply && Number.isFinite(s.reply.max_letters_per_day)) meta.dailyLimit = s.reply.max_letters_per_day;
     if (s.model_up) {
       pill.classList.add("ok");
       txt.textContent = `模型已连接 · ${new URL(s.endpoint).port || s.endpoint}`;
@@ -120,6 +124,7 @@ async function refreshStatus() {
       pill.classList.remove("ok");
       txt.textContent = "本地人格引擎 · 空壳待接入";
     }
+    refreshCounter();
   } catch {
     pill.classList.remove("ok");
     txt.textContent = "服务未连接";
@@ -239,8 +244,8 @@ async function sendLetter() {
     myCard.classList.add("shake");
     return;
   }
-  if (!state.unlimited && sentToday() >= 3) {
-    toast("今天的三封信已经寄出了。明天再写吧。（可开启“不限量”演示）");
+  if (!state.unlimited && sentToday() >= meta.dailyLimit) {
+    toast(`今天的 ${meta.dailyLimit} 封信已经寄出了。明天再写吧。（可开启“不限量”演示）`);
     return;
   }
 
@@ -278,9 +283,9 @@ async function sendLetter() {
     return;
   }
 
-  // 保留"书信的节奏感"：至少 3.2 秒的读信时间（游戏内是两三分钟）
+  // 保留"书信的节奏感"：至少 meta.minReadingMs 的读信时间（来自 config.json）
   const elapsed = Date.now() - t0;
-  await sleep(Math.max(0, 3200 - elapsed));
+  await sleep(Math.max(0, meta.minReadingMs - elapsed));
 
   showReading(false);
   wax.classList.add("faded");

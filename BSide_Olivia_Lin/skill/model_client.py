@@ -1,6 +1,7 @@
 """模型空壳客户端（响应式）。
 
-按用户指定的方式配置 google-generativeai，指向本地模型端点 http://127.0.0.1:8045：
+按用户指定的方式配置 google-generativeai，指向本地模型端点（默认 http://127.0.0.1:8045，
+可在 config.json 的 model 段修改）：
 
     import google.generativeai as genai
     genai.configure(
@@ -14,6 +15,8 @@
 - 端点不可达 / 调用失败 / 未安装 google-generativeai → 返回 None，
   由上层（app/server.py）自动降级到 local_engine 本地人格引擎。
 因此本模块永远不会让请求挂死或报错。
+
+参数优先级：环境变量（OLIVIA_*）> config.json > 内置默认。
 """
 from __future__ import annotations
 
@@ -21,11 +24,15 @@ import os
 import socket
 from urllib.parse import urlparse
 
-# ---------- 按用户指定的方式配置 ----------
-API_KEY = "test"
-ENDPOINT = os.environ.get("OLIVIA_ENDPOINT", "http://127.0.0.1:8045")
-MODEL = os.environ.get("OLIVIA_MODEL", "gemini-2.5-flash")
-TIMEOUT = float(os.environ.get("OLIVIA_TIMEOUT", "15"))
+from skill import config as _skill_config
+
+# ---------- 按用户指定的方式配置（值来自 config.json / 环境变量） ----------
+_cfg = _skill_config.load_config()[0]
+_m = _cfg.get("model", {})
+API_KEY = os.environ.get("OLIVIA_API_KEY", str(_m.get("api_key", "test")))
+ENDPOINT = os.environ.get("OLIVIA_ENDPOINT", str(_m.get("endpoint", "http://127.0.0.1:8045")))
+MODEL = os.environ.get("OLIVIA_MODEL", str(_m.get("model", "gemini-2.5-flash")))
+TIMEOUT = float(os.environ.get("OLIVIA_TIMEOUT", _m.get("timeout", 15)))
 
 try:
     import google.generativeai as genai
@@ -83,6 +90,7 @@ def status() -> dict:
     return {
         "endpoint": ENDPOINT,
         "model": MODEL,
+        "timeout": TIMEOUT,
         "genai_loaded": GENAI_LOADED,
         "genai_error": GENAI_ERROR,
         "model_up": model_available(),

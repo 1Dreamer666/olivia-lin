@@ -29,12 +29,18 @@ python -m skill.loader
 ### 方式 B：跑演示网页（含响应式模型空壳）
 
 ```bash
+cd BSide_Olivia_Lin                    # 项目可放在任意目录
 pip install google-generativeai        # 可选：不装则自动降级为本地人格引擎
-python BSide_Olivia_Lin/app/server.py  # http://0.0.0.0:8000
+python app/server.py                   # http://0.0.0.0:8000（端口等见 config.json）
 ```
 
-模型服务（http://127.0.0.1:8045）可达时走真实调用；不可达时**自动降级**到
-`skill/local_engine.py`（纯 Python 人格引擎，离线可用）——即用户指定的"响应式空壳"。
+模型服务（默认 http://127.0.0.1:8045，`config.json` 的 model 段可改）可达时走真实调用；
+不可达时**自动降级**到 `skill/local_engine.py`（纯 Python 人格引擎，离线可用）——
+即用户指定的"响应式空壳"。
+
+> 路径解耦：语料（`persona/`、`samples/`）、静态资源、端口、模型端点全部由
+> 项目根 `config.json` 驱动（详见 README 第三节），`python <任意路径>/app/server.py`
+> 与项目位置无关；无 config.json 时使用内置默认布局。
 
 ## 二、输出契约
 
@@ -54,6 +60,7 @@ python BSide_Olivia_Lin/app/server.py  # http://0.0.0.0:8000
 ```
 BSide_Olivia_Lin/
 ├── SKILL.md                  ← 本文件（入口）
+├── config.json               ← 唯一配置入口（路径/端口/模型端点/回信节奏，可选）
 ├── persona/
 │   ├── olivia_lin.md         ← Layer 0-4 人格模型（硬规则/身份/人格/语言/情感）
 │   ├── memories.md           ← Layer 5 记忆库（时间线/生活细节/语气锚点）
@@ -64,9 +71,10 @@ BSide_Olivia_Lin/
 ├── distill/
 │   └── CORPUS_TEMPLATE.md    ← 真实语料（游戏内导出回信）的整理模板
 ├── skill/
+│   ├── config.py             ← 配置加载与路径解析（路径解耦）
 │   ├── loader.py             ← 组装 system prompt
 │   ├── local_engine.py       ← 离线人格引擎（降级用）
-│   └── model_client.py       ← 模型空壳客户端（http://127.0.0.1:8045，含超时与降级）
+│   └── model_client.py       ← 模型空壳客户端（默认 127.0.0.1:8045，含超时与降级）
 └── app/
     ├── server.py             ← 零依赖 HTTP 服务（静态页 + /api/letter）
     └── static/               ← 演示网页（index.html / css / js）

@@ -1,0 +1,17 @@
+{
+  "_readme": "林离的信箱 · 配置文件。可放在任意位置，用环境变量 OLIVIA_CONFIG 指定路径；相对路径一律相对本文件所在目录解析。任何键可删除，删除即用默认值。",
+  "host": "0.0.0.0",
+  "port": 8000,
+  "skill_root": "auto",
+  "static_dir": "auto",
+  "model": {
+    "api_key": "test",
+    "endpoint": "http://127.0.0.1:8045",
+    "model": "gemini-2.5-flash",
+    "timeout": 15
+  },
+  "reply": {
+    "min_reading_ms": 3200,
+    "max_letters_per_day": 3
+  }
+}

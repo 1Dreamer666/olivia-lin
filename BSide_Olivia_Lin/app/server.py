@@ -3,17 +3,19 @@
 
 路由：
   GET  /               静态页（static/）
-  GET  /api/status     模型空壳状态（端点探活 + genai 加载情况）
+  GET  /api/status     模型空壳状态（端点探活 + genai 加载情况）+ 生效配置
   POST /api/letter     {"text": "来信正文"} → {"reply","weather","mood","engine","ms"}
 
 行为：
-  模型端点（默认 http://127.0.0.1:8045，可用 OLIVIA_ENDPOINT 覆盖）可达时，
+  模型端点（默认 http://127.0.0.1:8045，config.json 的 model 段可改）可达时，
   用 skill/loader 组装的 system prompt 走真实调用；不可达时自动降级到
   skill/local_engine 本地人格引擎 —— 页面永远"有回音"。
 
-运行：
-  python3 server.py            # 默认 http://0.0.0.0:8000
-  PORT=9000 python3 server.py  # 自定义端口
+运行（与项目所在目录无关）：
+  python app/server.py
+  端口 / 静态目录 / 语料目录 / 模型端点 均可在项目根 config.json 中修改，
+  或用环境变量覆盖（PORT / HOST / OLIVIA_CONFIG / OLIVIA_SKILL_ROOT /
+  OLIVIA_ENDPOINT / OLIVIA_MODEL / OLIVIA_API_KEY / OLIVIA_TIMEOUT）。
 """
 from __future__ import annotations
 
@@ -27,14 +29,60 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT.parent))
+APP_DIR = Path(__file__).resolve().parent
+_BOOT_ROOT = APP_DIR.parent
 
-from skill import loader, local_engine, model_client  # noqa: E402
 
-PORT = int(os.environ.get("PORT", "8000"))
-HOST = os.environ.get("HOST", "0.0.0.0")
-STATIC = ROOT / "static"
+def _boot_find_config() -> tuple[dict, Path | None]:
+    """启动期配置发现（不依赖 skill 包，先解决"从哪 import"的鸡蛋问题）。
+
+    查找顺序：OLIVIA_CONFIG 环境变量 → app/ 上级目录的 config.json → 工作目录的。
+    """
+    cands: list[Path] = []
+    env = os.environ.get("OLIVIA_CONFIG")
+    if env:
+        cands.append(Path(env).expanduser())
+    cands.append(_BOOT_ROOT / "config.json")
+    cands.append(Path.cwd() / "config.json")
+    for c in cands:
+        try:
+            if c.is_file():
+                data = json.loads(c.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data, c.resolve()
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}, None
+
+
+_boot_cfg, _boot_cfg_file = _boot_find_config()
+if _boot_cfg_file:
+    os.environ["OLIVIA_CONFIG"] = str(_boot_cfg_file)  # skill.config 复用同一份配置
+
+sys.path.insert(0, str(_BOOT_ROOT))                   # 默认布局下导入 skill 包
+try:
+    from skill import config as skill_config          # noqa: E402
+except ModuleNotFoundError:
+    # 拆分布局：skill 包不在 app/ 旁边，按 config.skill_root 找到它
+    sr = _boot_cfg.get("skill_root", "auto")
+    if sr and sr != "auto":
+        p = Path(str(sr)).expanduser()
+        if not p.is_absolute():
+            p = (_boot_cfg_file.parent if _boot_cfg_file else Path.cwd()) / p
+        sys.path.insert(0, str(p.resolve()))
+    from skill import config as skill_config          # noqa: E402
+
+_cfg, _cfg_file = skill_config.load_config()
+SKILL_ROOT = skill_config.resolve_skill_root(_cfg)
+if str(SKILL_ROOT) not in sys.path:
+    sys.path.insert(0, str(SKILL_ROOT))               # skill 包被分离到其他目录时
+STATIC = skill_config.resolve_static_dir(_cfg, APP_DIR)
+
+from skill import loader, local_engine, model_client  # noqa: E402,E501
+
+HOST = os.environ.get("HOST", str(_cfg.get("host", "0.0.0.0")))
+PORT = int(os.environ.get("PORT", _cfg.get("port", 8000)))
+REPLY_SETTINGS = skill_config.reply_settings(_cfg)
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -123,7 +171,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # type: ignore
         path = urlparse(self.path).path
         if path == "/api/status":
-            return self._send(200, json.dumps(model_client.status(), ensure_ascii=False),
+            payload = {
+                **model_client.status(),
+                "skill_root": str(SKILL_ROOT),
+                "static_dir": str(STATIC),
+                "config_file": str(_cfg_file) if _cfg_file else "defaults",
+                "reply": REPLY_SETTINGS,
+            }
+            return self._send(200, json.dumps(payload, ensure_ascii=False),
                               "application/json; charset=utf-8")
         if path == "/api/health":
             return self._send(200, '{"ok":true}', "application/json; charset=utf-8")
@@ -159,9 +214,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    if not (SKILL_ROOT / "persona" / "olivia_lin.md").is_file():
+        raise SystemExit(
+            f"在 skill_root 找不到语料: {SKILL_ROOT / 'persona' / 'olivia_lin.md'}\n"
+            f"请在 config.json 中设置 skill_root（或设置环境变量 OLIVIA_SKILL_ROOT）。"
+        )
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     up = model_client.model_available()
     print(f"林离的信箱已就绪  →  http://{HOST}:{PORT}")
+    print(f"配置: {_cfg_file if _cfg_file else '内置默认（无 config.json）'}")
+    print(f"skill_root: {SKILL_ROOT}")
+    print(f"static_dir: {STATIC}")
     print(f"模型空壳: {model_client.ENDPOINT} (model={model_client.MODEL}) "
           f"up={up} genai_loaded={model_client.GENAI_LOADED}")
     print("端点不可达时将自动降级为本地人格引擎 (skill/local_engine.py)")
