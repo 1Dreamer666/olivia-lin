@@ -475,6 +475,280 @@ body::before {
   75% { transform: translateX(-3px); }
 }
 
+/* ---------------- 系统设置抽屉与表单 ---------------- */
+
+.settings-drawer {
+  width: min(420px, 92vw);
+}
+.settings-body {
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+}
+.cfg-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cfg-row {
+  display: flex;
+  gap: 10px;
+}
+.flex-1 { flex: 1; min-width: 0; }
+.w-80 { width: 90px; }
+.cfg-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+}
+.cfg-input {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--paper) 60%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.cfg-input:focus {
+  border-color: var(--seal);
+}
+.cfg-select {
+  cursor: pointer;
+  background-color: var(--paper);
+}
+.cfg-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.cfg-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+.cfg-info-box {
+  background: color-mix(in srgb, var(--line) 30%, transparent);
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+}
+.cfg-info-row {
+  display: flex;
+  justify-content: space-between;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfg-info-k { color: var(--muted); flex: none; }
+.cfg-info-v { color: var(--ink-soft); font-family: monospace; overflow: hidden; text-overflow: ellipsis; }
+.cfg-tag {
+  font-size: 10.5px;
+  font-weight: normal;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--seal) 15%, transparent);
+  color: var(--seal);
+}
+.cfg-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+.cfg-secondary-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.full-width {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ---------------- 长按按钮（重大决策 3 秒防误触） ---------------- */
+
+.hold-btn {
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  touch-action: manipulation;
+}
+.hold-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0%;
+  background: var(--seal);
+  opacity: 0.32;
+  transition: width 0.06s linear;
+  pointer-events: none;
+}
+.hold-label { position: relative; z-index: 1; }
+.hold-btn.holding {
+  border-color: var(--seal);
+  transform: scale(0.98);
+}
+.hold-btn.holding .hold-progress {
+  opacity: 0.45;
+}
+.text-danger { color: #b84334 !important; border-color: rgba(184, 67, 52, 0.4) !important; }
+.text-danger:hover { border-color: #b84334 !important; }
+
+/* ---------------- 抽屉与被删后悔处 ---------------- */
+
+.drawer-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: normal;
+  display: block;
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+.accent-link {
+  color: var(--seal);
+  border-color: var(--seal);
+}
+.regret-drawer {
+  width: min(450px, 92vw);
+}
+.regret-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.regret-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.regret-select-all input { accent-color: var(--seal); width: 14px; height: 14px; cursor: pointer; }
+.regret-actions { display: flex; gap: 8px; }
+
+.regret-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.regret-item {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--paper) 75%, transparent);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  transition: border-color 0.2s, background 0.2s;
+}
+.regret-item:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--paper) 90%, transparent);
+}
+.regret-item input[type="checkbox"] {
+  accent-color: var(--seal);
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  cursor: pointer;
+}
+.regret-item-content { flex: 1; min-width: 0; }
+.regret-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.regret-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--seal) 16%, transparent);
+  color: var(--seal);
+}
+.regret-user-txt {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  margin-bottom: 4px;
+  font-weight: 500;
+  word-break: break-word;
+}
+.regret-reply-txt {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  font-family: var(--font-kai);
+  word-break: break-word;
+}
+.regret-single-btn {
+  align-self: center;
+  flex: none;
+}
+
+/* ---------------- 模态弹窗（密码验证） ---------------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(14, 16, 22, 0.58);
+  backdrop-filter: blur(3px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+.modal-overlay[hidden] { display: none; }
+.modal-card {
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 16px 44px var(--shadow);
+  width: min(390px, 92vw);
+  padding: 22px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: modalpop 0.24s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+@keyframes modalpop {
+  from { opacity: 0; transform: scale(0.93) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-title { font-size: 14.5px; font-weight: 600; margin: 0; letter-spacing: 0.08em; color: var(--ink); }
+.modal-body { display: flex; flex-direction: column; gap: 8px; }
+.modal-tip { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin: 0; }
+.modal-input { width: 100%; }
+.modal-err { color: #b84334; font-size: 12px; margin: 2px 0 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+
 /* ---------------- 响应式 ---------------- */
 
 @media (max-width: 980px) {

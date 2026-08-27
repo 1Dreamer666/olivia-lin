@@ -1,0 +1,24 @@
+{
+  "_readme": "林离的信箱 · 配置文件。可放在任意位置，用环境变量 OLIVIA_CONFIG 指定路径；相对路径一律相对本文件所在目录解析。任何键可删除，删除即用默认值。",
+  "_memory_readme": "memory.path: 三级记忆（工作 / 情景 / 长期）的落盘文件路径。auto=frozen 时放 exe 同级 data/memory.json，否则放 skill_root/data/memory.json；可用 OLIVIA_MEMORY 环境变量覆盖。每次寄信都会自动写一行（最近 30 条）；你可以直接编辑这个文件来改林离'记住'的内容。",
+  "host": "0.0.0.0",
+  "port": 8000,
+  "skill_root": "auto",
+  "static_dir": "auto",
+  "open_browser": true,
+  "model": {
+    "protocol": "auto",
+    "api_key": "test",
+    "endpoint": "http://127.0.0.1:8045",
+    "model": "gemini-2.5-flash",
+    "timeout": 15
+  },
+  "memory": {
+    "path": "auto",
+    "admin_password": "123456"
+  },
+  "reply": {
+    "min_reading_ms": 3200,
+    "max_letters_per_day": 3
+  }
+}

@@ -1,11 +1,13 @@
 /* ============================================================
    林离的信箱 · app.js
    写信 → 封缄 → 飞行信封 → 读信等待 → 打字机回信
-   本地存档 · 昼/夜 · 雨天画布 · WebAudio 环境音
+   本地存档 · 记忆库软删除(DELETED) · 3秒长按防误触 · 后悔处(回收站)批量回归
+   昼/夜主题 · 雨天画布 · WebAudio 环境音 · 系统设置
    ============================================================ */
 "use strict";
 
 const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 
 const LS = {
   draft: "linli.draft",
@@ -54,6 +56,9 @@ const state = {
   history: JSON.parse(localStorage.getItem(LS.history) || "[]"),
   sending: false,
   inspireIdx: 0,
+  adminPassword: "",
+  deletedItems: [],
+  selectedDeletedIds: new Set(),
 };
 
 function todayKey() { return new Date().toISOString().slice(0, 10); }
@@ -83,7 +88,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
 function refreshCounter() {
@@ -91,7 +96,7 @@ function refreshCounter() {
   if (state.unlimited) {
     el.textContent = `今日已寄 ${sentToday()} 封 · 不限量（演示）`;
   } else {
-    el.textContent = `今日 ${sentToday()} / 3`;
+    el.textContent = `今日 ${sentToday()} / ${meta.dailyLimit}`;
   }
 }
 
@@ -105,7 +110,69 @@ function showWeather(weather, mood) {
   moodChip.textContent = mood ? `心情 · ${mood}` : "";
 }
 
+/* ---------------- 3秒长按保护辅助函数（重大决策防误触） ---------------- */
+
+function bindLongPress(btn, onComplete, ms = 3000) {
+  if (!btn) return;
+  let timer = null;
+  let startTime = 0;
+  let raf = null;
+  let completed = false;
+
+  let progress = btn.querySelector(".hold-progress");
+  if (!progress) {
+    progress = document.createElement("span");
+    progress.className = "hold-progress";
+    btn.prepend(progress);
+  }
+
+  function start(e) {
+    if (e.type === "mousedown" && e.button !== 0) return;
+    completed = false;
+    startTime = Date.now();
+    btn.classList.add("holding");
+    progress.style.width = "0%";
+
+    function update() {
+      const elapsed = Date.now() - startTime;
+      const pct = Math.min(100, (elapsed / ms) * 100);
+      progress.style.width = pct + "%";
+      if (pct < 100) {
+        raf = requestAnimationFrame(update);
+      } else {
+        completed = true;
+        btn.classList.remove("holding");
+        progress.style.width = "0%";
+        audio.thunk();
+        if (navigator.vibrate) navigator.vibrate(50);
+        onComplete && onComplete();
+      }
+    }
+    raf = requestAnimationFrame(update);
+  }
+
+  function cancel() {
+    if (completed) return;
+    if (raf) cancelAnimationFrame(raf);
+    const elapsed = Date.now() - startTime;
+    if (elapsed > 200 && elapsed < ms && btn.classList.contains("holding")) {
+      toast("已取消（清空与删除是重大决策，需长按满 3 秒）");
+    }
+    btn.classList.remove("holding");
+    progress.style.width = "0%";
+  }
+
+  btn.addEventListener("mousedown", start);
+  btn.addEventListener("touchstart", start, { passive: true });
+  btn.addEventListener("mouseup", cancel);
+  btn.addEventListener("mouseleave", cancel);
+  btn.addEventListener("touchend", cancel);
+  btn.addEventListener("touchcancel", cancel);
+}
+
 /* ---------------- 引擎状态 ---------------- */
+
+const meta = { minReadingMs: 3200, dailyLimit: 3 };
 
 async function refreshStatus() {
   const pill = $("#engine-pill");
@@ -113,6 +180,8 @@ async function refreshStatus() {
   try {
     const r = await fetch("/api/status");
     const s = await r.json();
+    if (s.reply && Number.isFinite(s.reply.min_reading_ms)) meta.minReadingMs = s.reply.min_reading_ms;
+    if (s.reply && Number.isFinite(s.reply.max_letters_per_day)) meta.dailyLimit = s.reply.max_letters_per_day;
     if (s.model_up) {
       pill.classList.add("ok");
       txt.textContent = `模型已连接 · ${new URL(s.endpoint).port || s.endpoint}`;
@@ -120,10 +189,30 @@ async function refreshStatus() {
       pill.classList.remove("ok");
       txt.textContent = "本地人格引擎 · 空壳待接入";
     }
+    const regenBtn = $("#regen-btn");
+    if (regenBtn) regenBtn.hidden = !s.model_up;
+    refreshCounter();
+    updateMemoryStatsDisplay();
   } catch {
     pill.classList.remove("ok");
     txt.textContent = "服务未连接";
   }
+}
+
+async function updateMemoryStatsDisplay() {
+  try {
+    const r = await fetch("/api/memory");
+    const mem = await r.json();
+    const statsEl = $("#cfg-memory-stats");
+    if (statsEl && mem.ok) {
+      statsEl.textContent = `有效 ${mem.active_count || mem.total_letters || 0} 封 · 已删 ${mem.deleted_count || 0} 封`;
+    }
+    const memPathEl = $("#cfg-memory-path");
+    if (memPathEl && mem.path) {
+      memPathEl.textContent = mem.path;
+      memPathEl.title = mem.path;
+    }
+  } catch {}
 }
 
 /* ---------------- 打字机 ---------------- */
@@ -140,7 +229,7 @@ function typewrite(container, text, fast = false, onDone) {
     pEl = document.createElement("p");
     if (paras[pi].trimStart().startsWith("—— ")) pEl.classList.add("sign");
     container.appendChild(pEl);
-    pEl.appendChild(caret); // 光标始终是当前段落的子节点
+    pEl.appendChild(caret);
   }
 
   function step() {
@@ -204,7 +293,7 @@ function flyEnvelope(btnRect) {
   env.style.left = sx + "px";
   env.style.top = sy + "px";
   env.style.opacity = "1";
-  env.getBoundingClientRect(); // reflow
+  env.getBoundingClientRect();
   env.style.transition = "transform 1.15s cubic-bezier(.45,.05,.3,1), opacity 1.15s cubic-bezier(.45,.05,.3,1)";
   env.style.transform = `translate(${tx}px, ${ty}px) rotate(14deg) scale(0.6)`;
   setTimeout(() => { env.style.opacity = "0"; }, 850);
@@ -229,36 +318,38 @@ function showReading(on) {
   }
 }
 
-async function sendLetter() {
-  if (state.sending) return;
+async function sendLetter(opts) {
+  if (state.sending) return false;
+  const force = (opts && opts.force) || "auto";
+  const replaceLast = !!(opts && opts.replaceLast);
   const text = draft.value.trim();
   if (!text) {
     toast("先写点什么吧");
     myCard.classList.remove("shake");
     void myCard.offsetWidth;
     myCard.classList.add("shake");
-    return;
+    return false;
   }
-  if (!state.unlimited && sentToday() >= 3) {
-    toast("今天的三封信已经寄出了。明天再写吧。（可开启“不限量”演示）");
-    return;
+  if (force === "auto" && !state.unlimited && sentToday() >= meta.dailyLimit) {
+    toast(`今天的 ${meta.dailyLimit} 封信已经寄出了。明天再写吧。（可开启"不限量"演示）`);
+    return false;
   }
 
   setSending(true);
   audio.tick();
   audio.thunk();
 
-  // 火漆
   const wax = $("#wax-seal");
   wax.classList.remove("faded");
   void wax.offsetWidth;
   wax.classList.add("stamped");
 
-  const rect = sendBtn.getBoundingClientRect();
-  flyEnvelope(rect);
+  if (force !== "model" || !replaceLast) {
+    const rect = sendBtn.getBoundingClientRect();
+    flyEnvelope(rect);
+  }
 
-  // 等火漆 + 信封起飞的一部分时间，再开始"读信"
-  await sleep(750);
+  await sleep(force === "model" && replaceLast ? 80 : 750);
   showReading(true);
 
   const t0 = Date.now();
@@ -267,7 +358,7 @@ async function sendLetter() {
     const r = await fetch("/api/letter", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, force }),
     });
     data = await r.json();
     if (!r.ok) throw new Error(data.error || "信没寄出去");
@@ -275,37 +366,50 @@ async function sendLetter() {
     showReading(false);
     setSending(false);
     toast(e.message || "信没寄出去，请再试一次。");
-    return;
+    return false;
   }
 
-  // 保留"书信的节奏感"：至少 3.2 秒的读信时间（游戏内是两三分钟）
   const elapsed = Date.now() - t0;
-  await sleep(Math.max(0, 3200 - elapsed));
+  await sleep(Math.max(0, meta.minReadingMs - elapsed));
 
   showReading(false);
   wax.classList.add("faded");
 
-  // 她的信（渲染层容错：任何异常都兜底直贴全文，并保证按钮解锁）
   try {
     $("#her-date").textContent = `${fmtDate()} ${fmtTime()}`;
     showWeather(data.weather, data.mood);
     startRain(!!(data.weather && data.weather.includes("雨")));
 
-    const item = {
-      id: Date.now().toString(36),
-      ts: new Date().toISOString(),
-      text,
-      reply: data.reply,
-      weather: data.weather,
-      mood: data.mood,
-      engine: data.engine,
-    };
-    state.history.push(item);
-    if (state.history.length > 60) state.history = state.history.slice(-60);
+    let replaced = false;
+    if (replaceLast && state.history.length) {
+      const last = state.history[state.history.length - 1];
+      if (last.text === text) {
+        last.ts = new Date().toISOString();
+        last.reply = data.reply;
+        last.weather = data.weather;
+        last.mood = data.mood;
+        last.engine = data.engine;
+        replaced = true;
+      }
+    }
+    if (!replaced) {
+      const item = {
+        id: "ep_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        ts: new Date().toISOString(),
+        text,
+        reply: data.reply,
+        weather: data.weather,
+        mood: data.mood,
+        engine: data.engine,
+      };
+      state.history.push(item);
+      if (state.history.length > 60) state.history = state.history.slice(-60);
+      bumpSent();
+    }
     localStorage.setItem(LS.history, JSON.stringify(state.history));
-    bumpSent();
     refreshCounter();
     renderHistory();
+    updateMemoryStatsDisplay();
 
     if (REDUCED) {
       renderStatic(herBody, data.reply);
@@ -317,15 +421,24 @@ async function sendLetter() {
     renderStatic(herBody, data.reply);
     toast("回信显示出了点小状况，已直接贴出。");
   } finally {
-    setSending(false); // 回信开始显现即解锁，不必等打字结束
+    setSending(false);
   }
+  return true;
+}
+
+async function regenerateWithModel() {
+  if (state.sending) return;
+  const text = draft.value.trim();
+  if (!text) { toast("先写点什么，再让模型重写。"); return; }
+  const ok = await sendLetter({ force: "model", replaceLast: true });
+  if (ok) toast("已用模型重写这一封（覆盖了上一封的回复）");
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* ---------------- 存档 ---------------- */
+/* ---------------- 存档管理与软删除 ---------------- */
 
-const drawer = $("#history-drawer");
+const historyDrawer = $("#history-drawer");
 
 function renderHistory() {
   const list = $("#history-list");
@@ -335,30 +448,269 @@ function renderHistory() {
     const li = document.createElement("li");
     const d = new Date(item.ts);
     li.innerHTML = `
-      <div class="h-meta"><span>${d.getMonth() + 1} 月 ${d.getDate()} 日 ${fmtTime(d)} · ${item.weather || "—"}</span><span>${item.engine === "model" ? "模型" : "本地引擎"}</span></div>
+      <div class="h-meta">
+        <span>${d.getMonth() + 1} 月 ${d.getDate()} 日 ${fmtTime(d)} · ${item.weather || "—"}</span>
+        <span>${item.engine === "model" ? "模型" : "本地引擎"}</span>
+      </div>
       <div class="h-txt"></div>
-      <div class="h-act"><button class="ghostbtn sm h-del">删除</button></div>`;
+      <div class="h-act">
+        <button class="ghostbtn sm h-del hold-btn" data-hold-ms="3000" title="长按3秒删除此封信（标为DELETED）">
+          <span class="hold-progress"></span>
+          <span class="hold-label">删除 (长按3s)</span>
+        </button>
+      </div>`;
     li.querySelector(".h-txt").textContent = "我：" + item.text.slice(0, 60);
-    li.addEventListener("click", () => restoreItem(item));
-    li.querySelector(".h-del").addEventListener("click", (e) => {
-      e.stopPropagation();
+    li.addEventListener("click", () => restoreHistoryItem(item));
+
+    const delBtn = li.querySelector(".h-del");
+    delBtn.addEventListener("click", (e) => e.stopPropagation());
+    bindLongPress(delBtn, () => {
+      // 软删除
       state.history = state.history.filter((x) => x.id !== item.id);
       localStorage.setItem(LS.history, JSON.stringify(state.history));
       renderHistory();
-    });
+      // 同步请求服务端软删除
+      fetch("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "soft_delete", id: item.id }),
+      }).then(() => {
+        updateMemoryStatsDisplay();
+        toast("信件已标记为 DELETED（对 AI 隐藏，可在后悔处恢复）");
+      }).catch(() => {});
+    }, 3000);
+
     list.appendChild(li);
   });
 }
 
-function restoreItem(item) {
+function restoreHistoryItem(item) {
   draft.value = item.text;
   onDraftInput();
   $("#her-date").textContent = fmtDate(new Date(item.ts));
   showWeather(item.weather, item.mood);
   startRain(!!(item.weather && item.weather.includes("雨")));
   renderStatic(herBody, item.reply);
-  drawer.classList.remove("open");
+  historyDrawer.classList.remove("open");
   toast("已翻出这封信");
+}
+
+/* ---------------- 被删内容管理的后悔处 (Regret Center) ---------------- */
+
+const regretDrawer = $("#regret-drawer");
+const pwdDialog = $("#pwd-dialog");
+const adminPwdInput = $("#admin-pwd-input");
+const pwdError = $("#pwd-error");
+
+function openRegretCenter() {
+  if (state.adminPassword) {
+    loadRegretList();
+    regretDrawer.classList.add("open");
+  } else {
+    adminPwdInput.value = "123456"; // 默认填入默认密码提示
+    pwdError.hidden = true;
+    pwdDialog.hidden = false;
+    adminPwdInput.focus();
+  }
+}
+
+async function verifyAndEnterRegret() {
+  const pwd = adminPwdInput.value.trim();
+  if (!pwd) {
+    pwdError.textContent = "请输入密码";
+    pwdError.hidden = false;
+    return;
+  }
+  try {
+    const r = await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "verify_pwd", password: pwd }),
+    });
+    const res = await r.json();
+    if (r.ok && res.ok) {
+      state.adminPassword = pwd;
+      pwdDialog.hidden = true;
+      pwdError.hidden = true;
+      loadRegretList();
+      regretDrawer.classList.add("open");
+    } else {
+      pwdError.textContent = res.error || "密码错误，请重试";
+      pwdError.hidden = false;
+    }
+  } catch (err) {
+    pwdError.textContent = "验证请求失败，请检查服务状态";
+    pwdError.hidden = false;
+  }
+}
+
+async function loadRegretList() {
+  const list = $("#regret-list");
+  const empty = $("#regret-empty");
+  list.innerHTML = "";
+  state.selectedDeletedIds.clear();
+  updateRegretSelectionUI();
+
+  try {
+    const r = await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list_deleted", password: state.adminPassword }),
+    });
+    const res = await r.json();
+    if (!r.ok) {
+      toast(res.error || "加载后悔处失败");
+      return;
+    }
+    state.deletedItems = res.deleted || [];
+    empty.style.display = state.deletedItems.length ? "none" : "block";
+
+    [...state.deletedItems].reverse().forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "regret-item";
+      const epId = item.id || `ep_${item.ts}`;
+      li.innerHTML = `
+        <input type="checkbox" data-id="${epId}" class="regret-chk">
+        <div class="regret-item-content">
+          <div class="regret-meta">
+            <span>${item.date || (item.ts ? item.ts.slice(0, 10) : "未知日期")} · ${item.weather || "—"}</span>
+            <span class="regret-tag">DELETED</span>
+          </div>
+          <div class="regret-user-txt">来信：「${item.user_digest || item.text || "空"}」</div>
+          <div class="regret-reply-txt">回信：${item.reply_digest || item.reply || "—"}</div>
+        </div>
+        <button class="ghostbtn sm regret-single-btn" data-id="${epId}">回归</button>
+      `;
+
+      const chk = li.querySelector(".regret-chk");
+      chk.addEventListener("change", () => {
+        if (chk.checked) state.selectedDeletedIds.add(epId);
+        else state.selectedDeletedIds.delete(epId);
+        updateRegretSelectionUI();
+      });
+
+      li.querySelector(".regret-single-btn").addEventListener("click", () => {
+        restoreDeletedItems([epId]);
+      });
+
+      list.appendChild(li);
+    });
+  } catch (err) {
+    toast("网络错误，加载被删内容失败");
+  }
+}
+
+function updateRegretSelectionUI() {
+  const n = state.selectedDeletedIds.size;
+  const btn = $("#regret-restore-selected");
+  btn.disabled = n === 0;
+  btn.textContent = `回归选中 (${n})`;
+  const checkAll = $("#regret-check-all");
+  checkAll.checked = state.deletedItems.length > 0 && n === state.deletedItems.length;
+}
+
+async function restoreDeletedItems(ids) {
+  try {
+    const r = await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "restore",
+        password: state.adminPassword,
+        ids: ids === "all" ? "all" : Array.from(ids),
+      }),
+    });
+    const res = await r.json();
+    if (r.ok && res.ok) {
+      toast(`成功将 ${res.restored} 封记忆回归！`);
+      audio.chord();
+      loadRegretList();
+      refreshStatus();
+      updateMemoryStatsDisplay();
+    } else {
+      toast(res.error || "回归失败");
+    }
+  } catch (e) {
+    toast("请求失败，请稍后重试");
+  }
+}
+
+/* ---------------- 系统设置抽屉与配置持久化 ---------------- */
+
+const settingsDrawer = $("#settings-drawer");
+
+async function loadSettingsUI() {
+  try {
+    const r = await fetch("/api/config");
+    const data = await r.json();
+    if (!data.ok) return;
+    const cfg = data.config || {};
+    const mod = cfg.model || {};
+    const rep = cfg.reply || {};
+
+    $("#cfg-protocol").value = mod.protocol || "auto";
+    $("#cfg-endpoint").value = mod.endpoint || "";
+    $("#cfg-apikey").value = mod.api_key || "";
+    $("#cfg-model").value = mod.model || "";
+    $("#cfg-timeout").value = mod.timeout || 15;
+    $("#cfg-reading-ms").value = rep.min_reading_ms || 3200;
+    $("#cfg-daily-limit").value = rep.max_letters_per_day || 3;
+
+    $("#cfg-file-path").textContent = data.config_file || "内存默认";
+    $("#cfg-file-path").title = data.config_file || "";
+    $("#cfg-mode-tag").textContent = data.frozen ? "EXE 便携模式" : "源码模式";
+    updateMemoryStatsDisplay();
+  } catch (err) {
+    console.error("加载配置失败:", err);
+  }
+}
+
+async function saveSettingsUI() {
+  const payload = {
+    model: {
+      protocol: $("#cfg-protocol").value.trim() || "auto",
+      endpoint: $("#cfg-endpoint").value.trim(),
+      api_key: $("#cfg-apikey").value.trim(),
+      model: $("#cfg-model").value.trim(),
+      timeout: parseInt($("#cfg-timeout").value, 10) || 15,
+    },
+    reply: {
+      min_reading_ms: parseInt($("#cfg-reading-ms").value, 10) || 3200,
+      max_letters_per_day: parseInt($("#cfg-daily-limit").value, 10) || 3,
+    },
+  };
+  try {
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const res = await r.json();
+    if (r.ok && res.ok) {
+      toast("设置已保存并生效");
+      refreshStatus();
+      settingsDrawer.classList.remove("open");
+    } else {
+      toast(res.error || "保存配置失败");
+    }
+  } catch (err) {
+    toast("保存失败，请检查服务端");
+  }
+}
+
+async function resetSettingsUI() {
+  if (!confirm("确定要将所有设置恢复为默认值吗？")) return;
+  try {
+    const r = await fetch("/api/config/reset", { method: "POST" });
+    const res = await r.json();
+    if (r.ok && res.ok) {
+      toast("已恢复默认设置");
+      loadSettingsUI();
+      refreshStatus();
+    }
+  } catch {
+    toast("恢复默认失败");
+  }
 }
 
 /* ---------------- 雨 ---------------- */
@@ -453,7 +805,6 @@ const audio = {
     this.ctx = new AC();
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.9;
-    // 空间：feedback delay
     const delay = this.ctx.createDelay(1.0);
     delay.delayTime.value = 0.42;
     const fb = this.ctx.createGain();
@@ -581,11 +932,14 @@ function init() {
   renderHistory();
   refreshStatus();
 
-  // 事件
-  sendBtn.addEventListener("click", sendLetter);
+  // 发信与重写
+  sendBtn.addEventListener("click", () => sendLetter());
+  $("#regen-btn").addEventListener("click", regenerateWithModel);
   draft.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendLetter(); }
   });
+
+  // 顶栏按钮
   $("#theme-toggle").addEventListener("click", () => {
     const next = document.documentElement.dataset.theme === "night" ? "day" : "night";
     document.documentElement.dataset.theme = next;
@@ -593,6 +947,7 @@ function init() {
     $("#theme-toggle").textContent = next === "night" ? "☀" : "☾";
     $("#theme-toggle").classList.toggle("on", next === "night");
   });
+
   soundBtn.addEventListener("click", () => {
     state.sound = !state.sound;
     localStorage.setItem(LS.sound, state.sound ? "1" : "0");
@@ -600,19 +955,92 @@ function init() {
     soundBtn.title = state.sound ? "环境音：开" : "环境音：关";
     if (state.sound) { audio.ensure(); audio.chord(); }
   });
+
   limit.addEventListener("change", () => {
     state.unlimited = limit.checked;
     localStorage.setItem(LS.limit, state.unlimited ? "1" : "0");
     refreshCounter();
   });
-  $("#history-toggle").addEventListener("click", () => drawer.classList.toggle("open"));
-  $("#history-close").addEventListener("click", () => drawer.classList.remove("open"));
-  $("#history-clear").addEventListener("click", () => {
+
+  // 存档抽屉
+  $("#history-toggle").addEventListener("click", () => historyDrawer.classList.toggle("open"));
+  $("#history-close").addEventListener("click", () => historyDrawer.classList.remove("open"));
+
+  // 长按 3 秒清空所有存档（软删除，可后悔）
+  bindLongPress($("#history-clear"), () => {
     state.history = [];
     localStorage.removeItem(LS.history);
     renderHistory();
-    toast("存档已清空");
+    fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "soft_delete_all" }),
+    }).then(() => {
+      updateMemoryStatsDisplay();
+      toast("全部信件已标记为 DELETED（可在后悔处恢复）");
+    });
+  }, 3000);
+
+  // 设置抽屉
+  $("#settings-toggle").addEventListener("click", () => {
+    loadSettingsUI();
+    settingsDrawer.classList.toggle("open");
   });
+  $("#settings-close").addEventListener("click", () => settingsDrawer.classList.remove("open"));
+  $("#cfg-save-btn").addEventListener("click", saveSettingsUI);
+  $("#cfg-reset-btn").addEventListener("click", resetSettingsUI);
+
+  // 长按 3 秒清空记忆库（软删除）
+  bindLongPress($("#cfg-reset-mem-btn"), () => {
+    fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "soft_delete_all" }),
+    }).then(() => {
+      state.history = [];
+      localStorage.removeItem(LS.history);
+      renderHistory();
+      updateMemoryStatsDisplay();
+      toast("记忆库已软清空（标记为 DELETED，对 AI 隐藏，可在后悔处恢复）");
+    });
+  }, 3000);
+
+  // 后悔处入口
+  $("#history-regret-btn").addEventListener("click", openRegretCenter);
+  $("#cfg-regret-btn").addEventListener("click", openRegretCenter);
+  $("#regret-close").addEventListener("click", () => regretDrawer.classList.remove("open"));
+
+  // 密码验证模态框
+  $("#pwd-close").addEventListener("click", () => { pwdDialog.hidden = true; });
+  $("#pwd-cancel-btn").addEventListener("click", () => { pwdDialog.hidden = true; });
+  $("#pwd-confirm-btn").addEventListener("click", verifyAndEnterRegret);
+  adminPwdInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); verifyAndEnterRegret(); }
+  });
+
+  // 后悔处全选与批量回归
+  $("#regret-check-all").addEventListener("change", (e) => {
+    const on = e.target.checked;
+    $$(".regret-chk").forEach((chk) => {
+      chk.checked = on;
+      const id = chk.dataset.id;
+      if (on) state.selectedDeletedIds.add(id);
+      else state.selectedDeletedIds.delete(id);
+    });
+    updateRegretSelectionUI();
+  });
+
+  $("#regret-restore-selected").addEventListener("click", () => {
+    if (state.selectedDeletedIds.size === 0) return;
+    restoreDeletedItems(state.selectedDeletedIds);
+  });
+
+  $("#regret-restore-all").addEventListener("click", () => {
+    if (state.deletedItems.length === 0) { toast("后悔处暂无被删内容"); return; }
+    restoreDeletedItems("all");
+  });
+
+  // 打印与灵感
   $("#print-btn").addEventListener("click", () => window.print());
   $("#inspire-btn").addEventListener("click", () => {
     const line = INSPIRE[state.inspireIdx % INSPIRE.length];
@@ -622,10 +1050,26 @@ function init() {
     draft.focus();
     onDraftInput();
   });
+
+  // 点击外部关闭抽屉
   document.addEventListener("click", (e) => {
-    if (!drawer.classList.contains("open")) return;
-    if (!drawer.contains(e.target) && e.target !== $("#history-toggle") && !$("#history-toggle").contains(e.target)) {
-      drawer.classList.remove("open");
+    if (historyDrawer.classList.contains("open")) {
+      if (!historyDrawer.contains(e.target) && e.target !== $("#history-toggle") && !$("#history-toggle").contains(e.target)) {
+        historyDrawer.classList.remove("open");
+      }
+    }
+    if (settingsDrawer.classList.contains("open")) {
+      if (!settingsDrawer.contains(e.target) && e.target !== $("#settings-toggle") && !$("#settings-toggle").contains(e.target)) {
+        settingsDrawer.classList.remove("open");
+      }
+    }
+    if (regretDrawer.classList.contains("open")) {
+      if (!regretDrawer.contains(e.target) &&
+          e.target !== $("#history-regret-btn") &&
+          e.target !== $("#cfg-regret-btn") &&
+          !pwdDialog.contains(e.target)) {
+        regretDrawer.classList.remove("open");
+      }
     }
   });
 }
