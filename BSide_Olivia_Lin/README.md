@@ -68,9 +68,10 @@ python -m skill.local_engine  # 跑本地人格引擎（无需任何模型，离
 | `host` / `port` | `0.0.0.0` / `8000` | 监听地址与端口 |
 | `skill_root` | `auto` | 包含 `skill/`、`persona/`、`samples/` 的目录（"项目根"）。`auto` = skill 包上级目录；可写相对/绝对路径 |
 | `static_dir` | `auto` | 网页静态资源目录（`index.html`/`css`/`js`）。`auto` = `app/static` |
-| `model.api_key` | `test` | 模型调用 api key |
-| `model.endpoint` | `http://127.0.0.1:8045` | 模型端点 |
-| `model.model` | `gemini-2.5-flash` | 模型名 |
+| `model.protocol` | `auto` | 接口协议：`auto`（自动智能推断）/ `openai` / `gemini` / `anthropic` |
+| `model.api_key` | `test` | 模型调用 api key（sk-... 或 test） |
+| `model.endpoint` | `http://127.0.0.1:8045` | 模型端点（支持本地 mock、OpenAI 官方、DeepSeek、Claude、Ollama 等） |
+| `model.model` | `gemini-2.5-flash` | 模型名（如 `deepseek-chat`、`gpt-4o`、`claude-3-5-sonnet`、`gemini-2.5-flash`） |
 | `model.timeout` | `15` | 模型调用超时（秒），超时即降级本地引擎 |
 | `reply.min_reading_ms` | `3200` | 前端"读信"最短等待（保留书信节奏感） |
 | `reply.max_letters_per_day` | `3` | 每日信件上限（前端"不限量（演示）"可放开） |
@@ -78,29 +79,28 @@ python -m skill.local_engine  # 跑本地人格引擎（无需任何模型，离
 规则：
 - 相对路径一律相对 **config.json 所在目录**解析（与运行时 cwd 无关）；
 - 配置文件查找顺序：`OLIVIA_CONFIG` 环境变量 → 项目自带 `config.json` → 工作目录 `config.json`；
-- 环境变量可覆盖单项：`PORT`、`HOST`、`OLIVIA_SKILL_ROOT`、`OLIVIA_ENDPOINT`、`OLIVIA_MODEL`、`OLIVIA_API_KEY`、`OLIVIA_TIMEOUT`；
+- 环境变量可覆盖单项：`PORT`、`HOST`、`OLIVIA_PROTOCOL`、`OLIVIA_SKILL_ROOT`、`OLIVIA_ENDPOINT`、`OLIVIA_MODEL`、`OLIVIA_API_KEY`、`OLIVIA_TIMEOUT`；
 - **拆分部署**示例——语料与网页分离（`app/` 放 A 处，`skill/`+`persona/`+`samples/` 放 B 处）：
   在 A 处建 `config.json` 写 `"skill_root": "B 的绝对或相对路径"` 即可。
 
-## 四、模型空壳（响应式）
+## 四、多协议兼容模型客户端（响应式）
 
-`skill/model_client.py` 按如下方式配置（数值来自 config.json 的 model 段，环境变量可覆盖）：
+`skill/model_client.py` 现已升级为**多协议自动适配客户端**，原生支持主流大模型协议：
 
-```python
-import google.generativeai as genai
-genai.configure(
-    api_key="test",
-    transport='rest',
-    client_options={'api_endpoint': 'http://127.0.0.1:8045'}
-)
-```
-
-- 默认值即上表 model 段；环境变量 `OLIVIA_ENDPOINT` / `OLIVIA_MODEL` / `OLIVIA_API_KEY` / `OLIVIA_TIMEOUT` 可逐项覆盖
+1. **OpenAI 兼容协议（最通用）**：
+   - 适配端点：`https://api.openai.com`、`https://api.deepseek.com/v1`、`http://127.0.0.1:11434/v1` (Ollama)、OneAPI/NewAPI、LM Studio 等
+   - 自动请求 `/v1/chat/completions` 并携带 `Authorization: Bearer <key>`
+2. **Google Gemini 原生协议**：
+   - 支持官方 REST API `generateContent` 与本地 Gemini 响应式空壳（默认 `http://127.0.0.1:8045`）
+3. **Anthropic Claude 协议**：
+   - 适配 Claude 原生 `/v1/messages` 接口与 `x-api-key`
+4. **Auto 模式**：
+   - 根据填写的 Endpoint URL 或 Model 名称自动推断最适合的通信协议（如检测到 `deepseek`、`gpt` 自动走 OpenAI 协议，检测到 `claude` 走 Anthropic 协议）。
 
 API：
 
 ```
-GET  /api/status            → {endpoint, model, genai_loaded, model_up, ...}
+GET  /api/status            → {endpoint, model, protocol, active_protocol, model_up, ...}
 POST /api/letter            → {"text": "来信正文"}
      ← {reply, weather: 晴|阴|小雨|雨, mood, engine: model|local-persona, ms}
 ```

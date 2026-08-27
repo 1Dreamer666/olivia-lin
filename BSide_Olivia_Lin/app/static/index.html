@@ -138,21 +138,32 @@
     </div>
     <div class="settings-body">
       <div class="cfg-group">
+        <label class="cfg-label" for="cfg-protocol">接口协议 (Protocol)</label>
+        <select id="cfg-protocol" class="cfg-input cfg-select">
+          <option value="auto">Auto（自动智能识别协议）</option>
+          <option value="openai">OpenAI 兼容（/v1/chat/completions，通用标准）</option>
+          <option value="gemini">Google Gemini（generateContent）</option>
+          <option value="anthropic">Anthropic Claude（/v1/messages）</option>
+        </select>
+        <span class="cfg-hint">支持 OpenAI、DeepSeek、Qwen、Claude、Gemini、Ollama 等</span>
+      </div>
+
+      <div class="cfg-group">
         <label class="cfg-label" for="cfg-endpoint">模型端点 (Endpoint)</label>
-        <input type="text" id="cfg-endpoint" class="cfg-input" placeholder="http://127.0.0.1:8045">
-        <span class="cfg-hint">本地模型服务地址、第三方代理或官方 API</span>
+        <input type="text" id="cfg-endpoint" class="cfg-input" placeholder="http://127.0.0.1:8045 或 https://api.deepseek.com/v1">
+        <span class="cfg-hint">本地模型服务地址、第三方中转代理或官方 API</span>
       </div>
 
       <div class="cfg-group">
         <label class="cfg-label" for="cfg-apikey">API Key</label>
-        <input type="text" id="cfg-apikey" class="cfg-input" placeholder="test 或 Gemini API 密钥">
-        <span class="cfg-hint">本地空壳填 test，官方或代理端点填有效 Key</span>
+        <input type="text" id="cfg-apikey" class="cfg-input" placeholder="test 或 API 密钥（sk-...）">
+        <span class="cfg-hint">本地空壳填 test，官方或中转代理填有效 Key</span>
       </div>
 
       <div class="cfg-row">
         <div class="cfg-group flex-1">
           <label class="cfg-label" for="cfg-model">模型名称 (Model)</label>
-          <input type="text" id="cfg-model" class="cfg-input" placeholder="gemini-2.5-flash">
+          <input type="text" id="cfg-model" class="cfg-input" placeholder="gemini-2.5-flash 或 deepseek-chat">
         </div>
         <div class="cfg-group w-80">
           <label class="cfg-label" for="cfg-timeout">超时 (s)</label>

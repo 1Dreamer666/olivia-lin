@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     # "auto" = app/static（与 server.py 同级）；可写相对/绝对路径。
     "static_dir": "auto",
     "model": {
+        "protocol": "auto",          # auto | openai | gemini | anthropic
         "api_key": "test",
         "endpoint": "http://127.0.0.1:8045",
         "model": "gemini-2.5-flash",

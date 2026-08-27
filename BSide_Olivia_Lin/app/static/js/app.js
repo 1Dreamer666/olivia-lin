@@ -648,6 +648,7 @@ async function loadSettingsUI() {
     const mod = cfg.model || {};
     const rep = cfg.reply || {};
 
+    $("#cfg-protocol").value = mod.protocol || "auto";
     $("#cfg-endpoint").value = mod.endpoint || "";
     $("#cfg-apikey").value = mod.api_key || "";
     $("#cfg-model").value = mod.model || "";
@@ -667,6 +668,7 @@ async function loadSettingsUI() {
 async function saveSettingsUI() {
   const payload = {
     model: {
+      protocol: $("#cfg-protocol").value.trim() || "auto",
       endpoint: $("#cfg-endpoint").value.trim(),
       api_key: $("#cfg-apikey").value.trim(),
       model: $("#cfg-model").value.trim(),
