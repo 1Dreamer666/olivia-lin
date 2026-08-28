@@ -1,6 +1,5 @@
 /**
  * 分级记忆系统 (Tiered Memory Bank - TypeScript Port)
- * 100% 完整复刻 Python 版 memory_bank.py
  * 基于浏览器 LocalStorage 持久化存储与软删除/后悔处系统
  */
 
@@ -89,13 +88,14 @@ export function recordExchange(
   weather: string,
   mood: string,
   engine: string,
-  nowDate?: Date
+  nowDate?: Date,
+  explicitId?: string
 ): Episode {
   const d = nowDate || new Date();
   const a = analyzeText(userText);
   const data = loadMemory();
 
-  const id = `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id = explicitId || `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const ep: Episode = {
     id,
     ts: d.toISOString(),
@@ -106,12 +106,20 @@ export function recordExchange(
     engine,
     user_digest: (userText || '').trim().replace(/\n/g, ' ').slice(0, 40),
     reply_digest: (reply || '').trim().split('\n\n')[0].slice(0, 80),
+    user_text: userText,
+    reply_text: reply,
     farewell: Boolean(a.farewell),
     status: 'ACTIVE',
     deleted: false,
   };
 
-  data.episodes.push(ep);
+  // 避免同ID重复插入
+  const existingIdx = data.episodes.findIndex(e => e.id === ep.id);
+  if (existingIdx >= 0) {
+    data.episodes[existingIdx] = ep;
+  } else {
+    data.episodes.push(ep);
+  }
 
   if (data.episodes.length > 200) {
     data.episodes = data.episodes.slice(-200);
@@ -123,7 +131,6 @@ export function recordExchange(
     data.first_letter = actives[0].ts;
   }
 
-  // L3 晋升
   if (a.farewell && !data.notables.farewell) data.notables.farewell = ep.date;
   if (a.topics.includes('love') && !data.notables.love) data.notables.love = ep.date;
 
@@ -131,12 +138,22 @@ export function recordExchange(
   return ep;
 }
 
-export function softDeleteEpisode(epId: string): boolean {
+export function softDeleteEpisode(payload: any): boolean {
   const data = loadMemory();
   let changed = false;
   const nowIso = new Date().toISOString();
+
+  const epId = typeof payload === 'string' ? payload : (payload?.id || '');
+  const epText = typeof payload === 'object' ? (payload?.text || '') : '';
+  const epTs = typeof payload === 'object' ? (payload?.ts || '') : '';
+
   for (const e of data.episodes) {
-    if (e.id === epId) {
+    let match = false;
+    if (epId && e.id === epId) match = true;
+    else if (epTs && e.ts === epTs) match = true;
+    else if (epText && (e.user_text === epText || (e.user_digest && epText.startsWith(e.user_digest)))) match = true;
+
+    if (match) {
       e.status = 'DELETED';
       e.deleted = true;
       e.deleted_at = nowIso;
@@ -144,6 +161,31 @@ export function softDeleteEpisode(epId: string): boolean {
       break;
     }
   }
+
+  // 兜底：如果本地记忆库由于某种原因未同步这条记录，则直接构造一条 DELETED 记录入库，确保后悔处 100% 能看到！
+  if (!changed && typeof payload === 'object' && (epText || epId)) {
+    const d = epTs ? new Date(epTs) : new Date();
+    const fallbackEp: Episode = {
+      id: epId || `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      ts: d.toISOString(),
+      date: d.toISOString().slice(0, 10),
+      topics: ['daily'],
+      weather: payload.weather || '—',
+      mood: payload.mood || '平静',
+      engine: payload.engine || 'local',
+      user_digest: (epText || '').trim().replace(/\n/g, ' ').slice(0, 40),
+      reply_digest: (payload.reply || '').trim().split('\n\n')[0].slice(0, 80),
+      user_text: epText || payload.text || '',
+      reply_text: payload.reply || '',
+      farewell: false,
+      status: 'DELETED',
+      deleted: true,
+      deleted_at: nowIso,
+    };
+    data.episodes.push(fallbackEp);
+    changed = true;
+  }
+
   if (changed) {
     data.total_letters = activeEpisodes(data).length;
     saveMemory(data);
@@ -151,10 +193,12 @@ export function softDeleteEpisode(epId: string): boolean {
   return changed;
 }
 
-export function softDeleteAll(): number {
+export function softDeleteAll(items?: any[]): number {
   const data = loadMemory();
   let count = 0;
   const nowIso = new Date().toISOString();
+
+  // 标记已有记录
   for (const e of data.episodes) {
     if (!e.deleted && e.status !== 'DELETED') {
       e.status = 'DELETED';
@@ -163,16 +207,43 @@ export function softDeleteAll(): number {
       count++;
     }
   }
-  if (count > 0) {
-    data.total_letters = 0;
-    saveMemory(data);
+
+  // 如果传入了 UI 历史，确保所有不在 data.episodes 中的历史信件也全部妥善存入后悔处
+  if (Array.isArray(items)) {
+    const existingIds = new Set(data.episodes.map(e => e.id));
+    for (const it of items) {
+      if (it && it.id && !existingIds.has(it.id)) {
+        const d = it.ts ? new Date(it.ts) : new Date();
+        data.episodes.push({
+          id: it.id,
+          ts: d.toISOString(),
+          date: d.toISOString().slice(0, 10),
+          topics: ['daily'],
+          weather: it.weather || '—',
+          mood: it.mood || '平静',
+          engine: it.engine || 'local',
+          user_digest: (it.text || '').trim().replace(/\n/g, ' ').slice(0, 40),
+          reply_digest: (it.reply || '').trim().split('\n\n')[0].slice(0, 80),
+          user_text: it.text || '',
+          reply_text: it.reply || '',
+          farewell: false,
+          status: 'DELETED',
+          deleted: true,
+          deleted_at: nowIso,
+        });
+        count++;
+      }
+    }
   }
+
+  data.total_letters = 0;
+  saveMemory(data);
   return count;
 }
 
-export function restoreEpisodes(epIds?: string[] | string): number {
+export function restoreEpisodes(epIds?: string[] | string): Episode[] {
   const data = loadMemory();
-  let restored = 0;
+  const restoredList: Episode[] = [];
   const isAll = !epIds || epIds === 'all' || (Array.isArray(epIds) && epIds.includes('all'));
   const targetSet = Array.isArray(epIds) ? new Set(epIds) : new Set(typeof epIds === 'string' ? [epIds] : []);
 
@@ -182,12 +253,12 @@ export function restoreEpisodes(epIds?: string[] | string): number {
         e.status = 'ACTIVE';
         e.deleted = false;
         delete e.deleted_at;
-        restored++;
+        restoredList.push(e);
       }
     }
   }
 
-  if (restored > 0) {
+  if (restoredList.length > 0) {
     const actives = activeEpisodes(data);
     data.total_letters = actives.length;
     if (actives.length > 0 && !data.first_letter) {
@@ -195,7 +266,7 @@ export function restoreEpisodes(epIds?: string[] | string): number {
     }
     saveMemory(data);
   }
-  return restored;
+  return restoredList;
 }
 
 export function getSummary() {
@@ -233,7 +304,7 @@ export function renderMemoryContext(): string {
   }
 
   lines.push('');
-  lines.push('【近期情景记忆】（只有这些，不得编造其外的记忆）');
+  lines.push('【近期情景记忆】（只有这些，不得编造其外的记忆）：');
   for (const e of eps.slice(-RECENT_IN_PROMPT)) {
     const topics = e.topics.slice(0, 3).map(t => TOPIC_ZH[t] || t).join('、') || '日常';
     lines.push(`- ${e.date}（${topics}，她的回复：${e.mood || '平静'}）：你写了「${e.user_digest}」`);

@@ -62,13 +62,13 @@ export class AppCore {
   }
 
   public static postMemory(action: string, payload: any = {}) {
-    const { id, ids, password } = payload;
+    const { id, ids, items, password } = payload;
     if (action === 'delete' || action === 'soft_delete') {
-      const ok = softDeleteEpisode(id);
+      const ok = softDeleteEpisode(payload);
       return { ok, message: ok ? '已移入后悔处' : '未找到条目' };
     }
     if (action === 'clear' || action === 'soft_delete_all') {
-      const count = softDeleteAll();
+      const count = softDeleteAll(items);
       return { ok: true, deleted_count: count };
     }
     if (action === 'regret' || action === 'verify_pwd' || action === 'list_deleted') {
@@ -79,8 +79,8 @@ export class AppCore {
       return { ok: true, deleted: deletedEpisodes(data), items: deletedEpisodes(data) };
     }
     if (action === 'restore') {
-      const count = restoreEpisodes(ids || id);
-      return { ok: true, restored: count, restored_count: count };
+      const restoredList = restoreEpisodes(ids || id);
+      return { ok: true, restored: restoredList.length, restored_count: restoredList.length, items: restoredList };
     }
     return { ok: false, error: '未知操作' };
   }
@@ -133,14 +133,17 @@ export class AppCore {
     }
 
     // 记录到分级记忆库
+    let ep: any = null;
     try {
-      recordExchange(cleanText, replyText, weather, mood, usedEngine);
+      ep = recordExchange(cleanText, replyText, weather, mood, usedEngine);
     } catch (e) {
       console.warn('记忆记录失败:', e);
     }
 
     return {
       ok: true,
+      id: ep?.id,
+      episode: ep,
       reply: replyText,
       weather,
       mood,

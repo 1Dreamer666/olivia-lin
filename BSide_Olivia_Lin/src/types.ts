@@ -33,6 +33,8 @@ export interface Episode {
   engine: string;
   user_digest: string;
   reply_digest: string;
+  user_text?: string;
+  reply_text?: string;
   farewell: boolean;
   status: 'ACTIVE' | 'DELETED';
   deleted: boolean;
@@ -48,6 +50,8 @@ export interface MemoryData {
 
 export interface LetterResponse {
   ok: boolean;
+  id?: string;
+  episode?: Episode;
   reply: string;
   weather: string;
   mood: string;

@@ -1,9 +1,10 @@
 /* ============================================================
    林离的信箱 · BSide Letters (纯前端 TypeScript 核心编译版)
-   零服务端依赖 · 本地离线人格引擎 + 浏览器直连大模型 API + LocalStorage 分级记忆
+   零服务端依赖 · 本地离线人格引擎 + 浏览器直连大模型 API + LocalStorage 分级记忆与后悔处
    ============================================================ */
 "use strict";
 
+"use strict";
 var AppCoreExports = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -626,11 +627,11 @@ var AppCoreExports = (() => {
   function setAdminPassword(pwd) {
     localStorage.setItem(LS_PASSWORD_KEY, (pwd || "").trim() || DEFAULT_ADMIN_PASSWORD);
   }
-  function recordExchange(userText, reply, weather, mood, engine, nowDate) {
+  function recordExchange(userText, reply, weather, mood, engine, nowDate, explicitId) {
     const d = nowDate || /* @__PURE__ */ new Date();
     const a = analyzeText(userText);
     const data = loadMemory();
-    const id = `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const id = explicitId || `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const ep = {
       id,
       ts: d.toISOString(),
@@ -641,11 +642,18 @@ var AppCoreExports = (() => {
       engine,
       user_digest: (userText || "").trim().replace(/\n/g, " ").slice(0, 40),
       reply_digest: (reply || "").trim().split("\n\n")[0].slice(0, 80),
+      user_text: userText,
+      reply_text: reply,
       farewell: Boolean(a.farewell),
       status: "ACTIVE",
       deleted: false
     };
-    data.episodes.push(ep);
+    const existingIdx = data.episodes.findIndex((e) => e.id === ep.id);
+    if (existingIdx >= 0) {
+      data.episodes[existingIdx] = ep;
+    } else {
+      data.episodes.push(ep);
+    }
     if (data.episodes.length > 200) {
       data.episodes = data.episodes.slice(-200);
     }
@@ -659,12 +667,19 @@ var AppCoreExports = (() => {
     saveMemory(data);
     return ep;
   }
-  function softDeleteEpisode(epId) {
+  function softDeleteEpisode(payload) {
     const data = loadMemory();
     let changed = false;
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const epId = typeof payload === "string" ? payload : payload?.id || "";
+    const epText = typeof payload === "object" ? payload?.text || "" : "";
+    const epTs = typeof payload === "object" ? payload?.ts || "" : "";
     for (const e of data.episodes) {
-      if (e.id === epId) {
+      let match = false;
+      if (epId && e.id === epId) match = true;
+      else if (epTs && e.ts === epTs) match = true;
+      else if (epText && (e.user_text === epText || e.user_digest && epText.startsWith(e.user_digest))) match = true;
+      if (match) {
         e.status = "DELETED";
         e.deleted = true;
         e.deleted_at = nowIso;
@@ -672,13 +687,35 @@ var AppCoreExports = (() => {
         break;
       }
     }
+    if (!changed && typeof payload === "object" && (epText || epId)) {
+      const d = epTs ? new Date(epTs) : /* @__PURE__ */ new Date();
+      const fallbackEp = {
+        id: epId || `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        ts: d.toISOString(),
+        date: d.toISOString().slice(0, 10),
+        topics: ["daily"],
+        weather: payload.weather || "\u2014",
+        mood: payload.mood || "\u5E73\u9759",
+        engine: payload.engine || "local",
+        user_digest: (epText || "").trim().replace(/\n/g, " ").slice(0, 40),
+        reply_digest: (payload.reply || "").trim().split("\n\n")[0].slice(0, 80),
+        user_text: epText || payload.text || "",
+        reply_text: payload.reply || "",
+        farewell: false,
+        status: "DELETED",
+        deleted: true,
+        deleted_at: nowIso
+      };
+      data.episodes.push(fallbackEp);
+      changed = true;
+    }
     if (changed) {
       data.total_letters = activeEpisodes(data).length;
       saveMemory(data);
     }
     return changed;
   }
-  function softDeleteAll() {
+  function softDeleteAll(items) {
     const data = loadMemory();
     let count = 0;
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
@@ -690,15 +727,39 @@ var AppCoreExports = (() => {
         count++;
       }
     }
-    if (count > 0) {
-      data.total_letters = 0;
-      saveMemory(data);
+    if (Array.isArray(items)) {
+      const existingIds = new Set(data.episodes.map((e) => e.id));
+      for (const it of items) {
+        if (it && it.id && !existingIds.has(it.id)) {
+          const d = it.ts ? new Date(it.ts) : /* @__PURE__ */ new Date();
+          data.episodes.push({
+            id: it.id,
+            ts: d.toISOString(),
+            date: d.toISOString().slice(0, 10),
+            topics: ["daily"],
+            weather: it.weather || "\u2014",
+            mood: it.mood || "\u5E73\u9759",
+            engine: it.engine || "local",
+            user_digest: (it.text || "").trim().replace(/\n/g, " ").slice(0, 40),
+            reply_digest: (it.reply || "").trim().split("\n\n")[0].slice(0, 80),
+            user_text: it.text || "",
+            reply_text: it.reply || "",
+            farewell: false,
+            status: "DELETED",
+            deleted: true,
+            deleted_at: nowIso
+          });
+          count++;
+        }
+      }
     }
+    data.total_letters = 0;
+    saveMemory(data);
     return count;
   }
   function restoreEpisodes(epIds) {
     const data = loadMemory();
-    let restored = 0;
+    const restoredList = [];
     const isAll = !epIds || epIds === "all" || Array.isArray(epIds) && epIds.includes("all");
     const targetSet = Array.isArray(epIds) ? new Set(epIds) : new Set(typeof epIds === "string" ? [epIds] : []);
     for (const e of data.episodes) {
@@ -707,11 +768,11 @@ var AppCoreExports = (() => {
           e.status = "ACTIVE";
           e.deleted = false;
           delete e.deleted_at;
-          restored++;
+          restoredList.push(e);
         }
       }
     }
-    if (restored > 0) {
+    if (restoredList.length > 0) {
       const actives = activeEpisodes(data);
       data.total_letters = actives.length;
       if (actives.length > 0 && !data.first_letter) {
@@ -719,7 +780,7 @@ var AppCoreExports = (() => {
       }
       saveMemory(data);
     }
-    return restored;
+    return restoredList;
   }
   function getSummary() {
     const data = loadMemory();
@@ -752,7 +813,7 @@ var AppCoreExports = (() => {
       lines.push(`- \u4F60\u5E38\u5199\u7684\u4E3B\u9898\uFF1A${tops}\u3002`);
     }
     lines.push("");
-    lines.push("\u3010\u8FD1\u671F\u60C5\u666F\u8BB0\u5FC6\u3011\uFF08\u53EA\u6709\u8FD9\u4E9B\uFF0C\u4E0D\u5F97\u7F16\u9020\u5176\u5916\u7684\u8BB0\u5FC6\uFF09");
+    lines.push("\u3010\u8FD1\u671F\u60C5\u666F\u8BB0\u5FC6\u3011\uFF08\u53EA\u6709\u8FD9\u4E9B\uFF0C\u4E0D\u5F97\u7F16\u9020\u5176\u5916\u7684\u8BB0\u5FC6\uFF09\uFF1A");
     for (const e of eps.slice(-RECENT_IN_PROMPT)) {
       const topics = e.topics.slice(0, 3).map((t) => TOPIC_ZH[t] || t).join("\u3001") || "\u65E5\u5E38";
       lines.push(`- ${e.date}\uFF08${topics}\uFF0C\u5979\u7684\u56DE\u590D\uFF1A${e.mood || "\u5E73\u9759"}\uFF09\uFF1A\u4F60\u5199\u4E86\u300C${e.user_digest}\u300D`);
@@ -969,13 +1030,13 @@ var AppCoreExports = (() => {
       };
     }
     static postMemory(action, payload = {}) {
-      const { id, ids, password } = payload;
+      const { id, ids, items, password } = payload;
       if (action === "delete" || action === "soft_delete") {
-        const ok = softDeleteEpisode(id);
+        const ok = softDeleteEpisode(payload);
         return { ok, message: ok ? "\u5DF2\u79FB\u5165\u540E\u6094\u5904" : "\u672A\u627E\u5230\u6761\u76EE" };
       }
       if (action === "clear" || action === "soft_delete_all") {
-        const count = softDeleteAll();
+        const count = softDeleteAll(items);
         return { ok: true, deleted_count: count };
       }
       if (action === "regret" || action === "verify_pwd" || action === "list_deleted") {
@@ -986,8 +1047,8 @@ var AppCoreExports = (() => {
         return { ok: true, deleted: deletedEpisodes(data), items: deletedEpisodes(data) };
       }
       if (action === "restore") {
-        const count = restoreEpisodes(ids || id);
-        return { ok: true, restored: count, restored_count: count };
+        const restoredList = restoreEpisodes(ids || id);
+        return { ok: true, restored: restoredList.length, restored_count: restoredList.length, items: restoredList };
       }
       return { ok: false, error: "\u672A\u77E5\u64CD\u4F5C" };
     }
@@ -1032,13 +1093,16 @@ var AppCoreExports = (() => {
         mood = localOut.mood;
         usedEngine = "local";
       }
+      let ep = null;
       try {
-        recordExchange(cleanText, replyText, weather, mood, usedEngine);
+        ep = recordExchange(cleanText, replyText, weather, mood, usedEngine);
       } catch (e) {
         console.warn("\u8BB0\u5FC6\u8BB0\u5F55\u5931\u8D25:", e);
       }
       return {
         ok: true,
+        id: ep?.id,
+        episode: ep,
         reply: replyText,
         weather,
         mood,
@@ -1051,11 +1115,9 @@ var AppCoreExports = (() => {
 })();
 
 
-(function(g) {
-  if (typeof AppCoreExports !== 'undefined' && AppCoreExports.AppCore) {
-    g.AppCore = AppCoreExports.AppCore;
-  }
-})(typeof window !== 'undefined' ? window : globalThis);
+var AppCore = (typeof AppCoreExports !== 'undefined' && AppCoreExports.AppCore) ? AppCoreExports.AppCore : (typeof window !== 'undefined' ? window.AppCore : globalThis.AppCore);
+if (typeof window !== 'undefined') { window.AppCore = AppCore; }
+if (typeof globalThis !== 'undefined') { globalThis.AppCore = AppCore; }
 
 
 
@@ -1155,255 +1217,371 @@ function refreshCounter() {
   }
 }
 
-function showWeather(weather, mood) {
-  const chip = $("#weather-chip");
-  chip.className = "weather-chip " + (WEATHER_CLASS[weather] || "w-cloudy");
-  chip.hidden = !weather;
-  $("#weather-text").textContent = weather || "";
-  const moodChip = $("#mood-chip");
-  moodChip.hidden = !mood;
-  moodChip.textContent = mood ? `心情 · ${mood}` : "";
+function updateCharCount(n) {
+  $("#char-count").textContent = `${n} 字`;
 }
 
-function bindLongPress(btn, onComplete, ms = 3000) {
-  if (!btn) return;
-  let startTime = 0;
-  let raf = null;
-  let completed = false;
-
-  let progress = btn.querySelector(".hold-progress");
-  if (!progress) {
-    progress = document.createElement("span");
-    progress.className = "hold-progress";
-    btn.prepend(progress);
-  }
-
-  function start(e) {
-    if (e.type === "mousedown" && e.button !== 0) return;
-    completed = false;
-    startTime = Date.now();
-    btn.classList.add("holding");
-    progress.style.width = "0%";
-
-    function update() {
-      const elapsed = Date.now() - startTime;
-      const pct = Math.min(100, (elapsed / ms) * 100);
-      progress.style.width = pct + "%";
-      if (pct < 100) {
-        raf = requestAnimationFrame(update);
-      } else {
-        completed = true;
-        btn.classList.remove("holding");
-        progress.style.width = "0%";
-        audio.thunk();
-        if (navigator.vibrate) navigator.vibrate(50);
-        onComplete && onComplete();
-      }
-    }
-    raf = requestAnimationFrame(update);
-  }
-
-  function cancel() {
-    if (completed) return;
-    if (raf) cancelAnimationFrame(raf);
-    const elapsed = Date.now() - startTime;
-    if (elapsed > 200 && elapsed < ms && btn.classList.contains("holding")) {
-      toast("已取消（清空与删除是重大决策，需长按满 3 秒）");
-    }
-    btn.classList.remove("holding");
-    progress.style.width = "0%";
-  }
-
-  btn.addEventListener("mousedown", start);
-  btn.addEventListener("touchstart", start, { passive: true });
-  btn.addEventListener("mouseup", cancel);
-  btn.addEventListener("mouseleave", cancel);
-  btn.addEventListener("touchend", cancel);
-  btn.addEventListener("touchcancel", cancel);
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem(LS.theme, theme);
+  const btn = $("#theme-toggle");
+  btn.textContent = theme === "night" ? "☀" : "☾";
+  btn.title = theme === "night" ? "切换至日间" : "切换至夜间";
 }
 
-async function refreshStatus() {
-  const pill = $("#engine-pill");
-  const txt = $("#engine-text");
-  try {
-    const s = AppCore.getStatus();
-    if (s.reply && Number.isFinite(s.reply.min_reading_ms)) meta.minReadingMs = s.reply.min_reading_ms;
-    if (s.reply && Number.isFinite(s.reply.max_letters_per_day)) meta.dailyLimit = s.reply.max_letters_per_day;
-    if (s.model_up) {
-      pill.classList.add("ok");
-      txt.textContent = `模型已连接 · ${s.endpoint.slice(0, 24)}`;
-    } else {
-      pill.classList.remove("ok");
-      txt.textContent = "本地人格引擎 · 纯前端独立";
+function toggleTheme() {
+  const cur = document.documentElement.dataset.theme || "day";
+  setTheme(cur === "day" ? "night" : "day");
+}
+
+class SoundFX {
+  constructor() {
+    this.ctx = null;
+    this.rainGain = null;
+  }
+  ensure() {
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) this.ctx = new AC();
     }
-    const regenBtn = $("#regen-btn");
-    if (regenBtn) regenBtn.hidden = !s.model_up;
-    refreshCounter();
-    updateMemoryStatsDisplay();
-  } catch {
-    pill.classList.remove("ok");
-    txt.textContent = "引擎就绪";
+    if (this.ctx && this.ctx.state === "suspended") {
+      this.ctx.resume().catch(() => {});
+    }
+  }
+  chord() {
+    if (!state.sound || !this.ctx) return;
+    this.ensure();
+    const notes = [261.63, 329.63, 392.0, 523.25, 659.25];
+    const now = this.ctx.currentTime;
+    notes.forEach((freq, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + i * 0.06);
+      gain.gain.setValueAtTime(0, now + i * 0.06);
+      gain.gain.linearRampToValueAtTime(0.06, now + i * 0.06 + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.06 + 1.8);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now + i * 0.06);
+      osc.stop(now + i * 0.06 + 1.9);
+    });
+  }
+  thump() {
+    if (!state.sound || !this.ctx) return;
+    this.ensure();
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const now = this.ctx.currentTime;
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(90, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.18);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.24);
   }
 }
+const audio = new SoundFX();
 
-async function updateMemoryStatsDisplay() {
-  try {
-    const mem = AppCore.getMemory();
-    const statsEl = $("#cfg-memory-stats");
-    if (statsEl && mem.ok) {
-      statsEl.textContent = `有效 ${mem.active_count || mem.total_letters || 0} 封 · 已删 ${mem.deleted_count || 0} 封`;
-    }
-    const memPathEl = $("#cfg-memory-path");
-    if (memPathEl && mem.path) {
-      memPathEl.textContent = mem.path;
-      memPathEl.title = mem.path;
-    }
-  } catch {}
-}
+let typeTimer = null;
+function typewrite(el, text, fast = false, onDone) {
+  clearTimeout(typeTimer);
+  el.innerHTML = "";
+  let i = 0;
+  const len = text.length;
 
-function typewrite(container, text, fast = false, onDone) {
-  container.innerHTML = "";
-  const paras = text.replace(/\r/g, "").split(/\n{2,}/);
-  const caret = document.createElement("span");
+  let caret = document.createElement("span");
   caret.className = "caret";
-  let pi = 0, ci = 0, pEl = null;
-
-  function ensurePara() {
-    if (pEl) return;
-    pEl = document.createElement("p");
-    if (paras[pi].trimStart().startsWith("—— ")) pEl.classList.add("sign");
-    container.appendChild(pEl);
-    pEl.appendChild(caret);
-  }
+  el.appendChild(caret);
 
   function step() {
-    if (pi >= paras.length) {
-      if (caret.parentNode) caret.remove();
-      onDone && onDone();
-      return;
-    }
-    const para = paras[pi];
-    ensurePara();
-    if (ci < para.length) {
-      const ch = para[ci++];
-      pEl.insertBefore(document.createTextNode(ch), caret);
+    if (i < len) {
+      const ch = text[i++];
+      if (ch === "\n") {
+        if (text[i] === "\n") {
+          i++;
+          const br1 = document.createElement("br");
+          const br2 = document.createElement("br");
+          el.insertBefore(br1, caret);
+          el.insertBefore(br2, caret);
+        } else {
+          el.insertBefore(document.createElement("br"), caret);
+        }
+      } else {
+        el.insertBefore(document.createTextNode(ch), caret);
+      }
       let d = fast ? 4 : 16 + Math.random() * 30;
       if ("。！？…".includes(ch)) d += fast ? 40 : 240;
       else if ("，、；：”".includes(ch)) d += fast ? 20 : 100;
-      setTimeout(step, d);
+      typeTimer = setTimeout(step, d);
     } else {
-      pi++;
-      ci = 0;
-      pEl = null;
-      container.scrollTop = container.scrollHeight;
-      setTimeout(step, fast ? 10 : 260);
+      setTimeout(() => caret.remove(), 1200);
+      if (onDone) onDone();
     }
   }
   step();
 }
 
-function renderStatic(container, text) {
-  container.innerHTML = "";
-  text.replace(/\r/g, "").split(/\n{2,}/).forEach((para) => {
-    const p = document.createElement("p");
-    if (para.trimStart().startsWith("—— ")) p.classList.add("sign");
-    p.textContent = para;
-    container.appendChild(p);
+function renderStatic(el, text) {
+  clearTimeout(typeTimer);
+  el.innerHTML = "";
+  const paras = text.split("\n\n");
+  paras.forEach((p) => {
+    const pEl = document.createElement("p");
+    if (p.startsWith("——")) {
+      pEl.className = "sign";
+      pEl.textContent = p;
+    } else {
+      pEl.innerHTML = p.replace(/\n/g, "<br>");
+    }
+    el.appendChild(pEl);
   });
 }
 
-const myCard = $("#my-card");
-const herCard = $("#her-card");
-const herBody = $("#her-body");
+class RainEffect {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.drops = [];
+    this.running = false;
+    this.raf = null;
+    this.resize = this.resize.bind(this);
+    this.loop = this.loop.bind(this);
+    window.addEventListener("resize", this.resize);
+  }
+  resize() {
+    const r = this.canvas.parentElement.getBoundingClientRect();
+    this.canvas.width = r.width;
+    this.canvas.height = r.height;
+  }
+  start() {
+    this.resize();
+    this.canvas.classList.add("raining");
+    if (this.running) return;
+    this.running = true;
+    this.drops = Array.from({ length: 45 }, () => ({
+      x: Math.random() * this.canvas.width,
+      y: Math.random() * this.canvas.height,
+      len: 8 + Math.random() * 14,
+      spd: 3 + Math.random() * 4,
+      alpha: 0.15 + Math.random() * 0.25,
+    }));
+    this.loop();
+  }
+  stop() {
+    this.running = false;
+    this.canvas.classList.remove("raining");
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+  loop() {
+    if (!this.running) return;
+    const { ctx, canvas } = this;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(120, 150, 190, 0.4)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const d of this.drops) {
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x - 1, d.y + d.len);
+      d.y += d.spd;
+      d.x -= 0.5;
+      if (d.y > canvas.height) {
+        d.y = -d.len;
+        d.x = Math.random() * (canvas.width + 50);
+      }
+    }
+    ctx.stroke();
+    this.raf = requestAnimationFrame(this.loop);
+  }
+}
+
+let rain;
+function startRain(on) {
+  if (!rain) rain = new RainEffect($("#rain"));
+  if (on) rain.start();
+  else rain.stop();
+}
+
+function showWeather(weather, mood) {
+  const wEl = $("#weather-chip");
+  const mEl = $("#mood-chip");
+  if (weather) {
+    wEl.className = "weather-chip " + (WEATHER_CLASS[weather] || "w-sunny");
+    $("#weather-text").textContent = weather;
+    wEl.hidden = false;
+  } else {
+    wEl.hidden = true;
+  }
+  if (mood) {
+    mEl.textContent = mood;
+    mEl.hidden = false;
+  } else {
+    mEl.hidden = true;
+  }
+}
+
+let readingInterval = null;
+function showReading(show) {
+  const r = $("#reading");
+  const k = $("#keys");
+  const t = $("#reading-text");
+  clearInterval(readingInterval);
+  if (show) {
+    r.hidden = false;
+    k.hidden = false;
+    k.classList.add("playing");
+    let idx = 0;
+    t.textContent = READING_PHRASES[0];
+    readingInterval = setInterval(() => {
+      idx = (idx + 1) % READING_PHRASES.length;
+      t.textContent = READING_PHRASES[idx];
+    }, 2200);
+  } else {
+    r.hidden = true;
+    k.hidden = true;
+    k.classList.remove("playing");
+  }
+}
+
+function flyEnvelope(fromEl, toEl, onDone) {
+  const env = document.createElement("div");
+  env.className = "envelope";
+  env.innerHTML = `
+    <svg viewBox="0 0 100 68" width="100%" height="100%">
+      <rect x="2" y="2" width="96" height="64" rx="3" fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>
+      <path d="M2 2 L50 38 L98 2" fill="none" stroke="var(--ink)" stroke-width="2"/>
+      <circle cx="50" cy="38" r="8" fill="var(--seal)"/>
+      <text x="50" y="42" font-size="9" text-anchor="middle" fill="var(--paper)" font-family="var(--font-kai)">離</text>
+    </svg>`;
+  document.body.appendChild(env);
+
+  const r1 = fromEl.getBoundingClientRect();
+  const r2 = toEl.getBoundingClientRect();
+
+  const startX = r1.left + r1.width / 2 - 55;
+  const startY = r1.top + r1.height / 2 - 35;
+  const endX = r2.left + r2.width / 2 - 55;
+  const endY = r2.top + r2.height / 2 - 35;
+
+  env.style.transform = `translate(${startX}px, ${startY}px) scale(0.6)`;
+  env.style.opacity = "0";
+
+  requestAnimationFrame(() => {
+    env.classList.add("flying");
+    env.style.transform = `translate(${endX}px, ${endY}px) scale(1) rotate(-4deg)`;
+    env.style.opacity = "1";
+  });
+
+  setTimeout(() => {
+    env.style.opacity = "0";
+    setTimeout(() => {
+      env.remove();
+      if (onDone) onDone();
+    }, 400);
+  }, 1050);
+}
+
+function refreshStatus() {
+  try {
+    const data = AppCore.getStatus();
+    const pill = $("#engine-pill");
+    const txt = $("#engine-text");
+    pill.classList.toggle("ok", !!data.ok);
+
+    if (data.mode === "model") {
+      txt.textContent = data.model ? `模型 · ${data.model}` : `模型 (${data.active_protocol || "OpenAI"})`;
+      pill.title = `端点: ${data.endpoint}\n协议: ${data.active_protocol || data.protocol}`;
+    } else {
+      txt.textContent = "本地离线人格引擎";
+      pill.title = "未连接大模型端点，当前由内置的林离人格启发引擎生成回信。可在「设置」中配置 API Key。";
+    }
+
+    const regenBtn = $("#regen-btn");
+    if (regenBtn) {
+      regenBtn.hidden = data.mode !== "model";
+    }
+
+    if (data.reply) {
+      meta.minReadingMs = data.reply.min_reading_ms || 3200;
+      meta.dailyLimit = data.reply.max_letters_per_day || 3;
+    }
+  } catch (e) {
+    console.warn("更新引擎状态失败:", e);
+  }
+}
+
 const draft = $("#draft");
 const sendBtn = $("#send-btn");
+const wax = $("#wax-seal");
+const herBody = $("#her-body");
 
-function setSending(on) {
-  state.sending = on;
-  sendBtn.disabled = on;
+function onDraftInput() {
+  const text = draft.value;
+  updateCharCount(text.trim().length);
+  localStorage.setItem(LS.draft, text);
 }
 
-function flyEnvelope(btnRect) {
-  const env = $("#envelope");
-  const target = herCard.getBoundingClientRect();
-  const sx = btnRect.left + btnRect.width / 2 - 55;
-  const sy = btnRect.top + btnRect.height / 2 - 35;
-  const tx = target.left + target.width / 2 - sx;
-  const ty = target.top + 30 - sy;
-  env.style.transition = "none";
-  env.style.transform = "none";
-  env.style.left = sx + "px";
-  env.style.top = sy + "px";
-  env.style.opacity = "1";
-  env.getBoundingClientRect();
-  env.style.transition = "transform 1.15s cubic-bezier(.45,.05,.3,1), opacity 1.15s cubic-bezier(.45,.05,.3,1)";
-  env.style.transform = `translate(${tx}px, ${ty}px) rotate(14deg) scale(0.6)`;
-  setTimeout(() => { env.style.opacity = "0"; }, 850);
-  setTimeout(() => { env.style.transition = "none"; }, 1300);
+function setSending(sending) {
+  state.sending = sending;
+  sendBtn.disabled = sending;
+  draft.disabled = sending;
+  $("#send-btn .send-label").textContent = sending ? "寄出中…" : "封缄寄出";
 }
 
-let readingTimer;
-function showReading(on) {
-  const reading = $("#reading");
-  const keys = $("#keys");
-  reading.hidden = !on;
-  keys.hidden = !on;
-  keys.classList.toggle("playing", on);
-  clearInterval(readingTimer);
-  if (on) {
-    let i = 0;
-    $("#reading-text").textContent = READING_PHRASES[0];
-    readingTimer = setInterval(() => {
-      i = (i + 1) % READING_PHRASES.length;
-      $("#reading-text").textContent = READING_PHRASES[i];
-    }, 1500);
-  }
-}
+async function sendLetter(opts = {}) {
+  const { force = "auto", replaceLast = false } = opts;
+  if (state.sending) return;
 
-async function sendLetter(opts) {
-  if (state.sending) return false;
-  const force = (opts && opts.force) || "auto";
-  const replaceLast = !!(opts && opts.replaceLast);
   const text = draft.value.trim();
   if (!text) {
-    toast("先写点什么吧");
-    myCard.classList.remove("shake");
-    void myCard.offsetWidth;
-    myCard.classList.add("shake");
-    return false;
+    $("#my-card").classList.add("shake");
+    setTimeout(() => $("#my-card").classList.remove("shake"), 450);
+    toast("信纸还是空的。写一句话也行。");
+    draft.focus();
+    return;
   }
-  if (force === "auto" && !state.unlimited && sentToday() >= meta.dailyLimit) {
-    toast(`今天的 ${meta.dailyLimit} 封信已经寄出了。明天再写吧。（可开启"不限量"演示）`);
-    return false;
+
+  if (!state.unlimited && sentToday() >= meta.dailyLimit) {
+    toast(`今天已经寄了 ${meta.dailyLimit} 封信了。剩下的，明天再说吧。`);
+    return;
   }
 
   setSending(true);
-  audio.tick();
-  audio.thunk();
+  audio.ensure();
 
-  const wax = $("#wax-seal");
   wax.classList.remove("faded");
-  void wax.offsetWidth;
   wax.classList.add("stamped");
+  audio.thump();
 
-  if (force !== "model" || !replaceLast) {
-    const rect = sendBtn.getBoundingClientRect();
-    flyEnvelope(rect);
-  }
+  await sleep(650);
 
-  await sleep(force === "model" && replaceLast ? 80 : 750);
+  const myCard = $("#my-card");
+  const herCard = $("#her-card");
+  flyEnvelope(myCard, herCard);
+
+  await sleep(500);
+
   showReading(true);
+  startRain(false);
+  herBody.innerHTML = "";
 
   const t0 = Date.now();
-  let data = null;
+  let data;
   try {
     data = await AppCore.sendLetter(text, force);
-    if (!data.ok) throw new Error(data.error || "信没寄出去");
-  } catch (e) {
-    showReading(false);
-    setSending(false);
-    toast(e.message || "信没寄出去，请再试一次。");
-    return false;
+  } catch (err) {
+    console.error("信件处理异常:", err);
+    data = {
+      ok: true,
+      reply: "（信在途中遇到了点风，但她收到了。）\n\n信我读过了。今天就先坐一会儿吧。\n\n—— 林离",
+      weather: "阴",
+      mood: "平静",
+      engine: "local",
+    };
   }
 
   const elapsed = Date.now() - t0;
@@ -1430,8 +1608,9 @@ async function sendLetter(opts) {
       }
     }
     if (!replaced) {
+      // 保持与 AppCore/MemoryBank 绝对一致的 ID
       const item = {
-        id: "ep_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+        id: data.id || data.episode?.id || ("ep_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6)),
         ts: new Date().toISOString(),
         text,
         reply: data.reply,
@@ -1500,12 +1679,21 @@ function renderHistory() {
     const delBtn = li.querySelector(".h-del");
     delBtn.addEventListener("click", (e) => e.stopPropagation());
     bindLongPress(delBtn, () => {
-      state.history = state.history.filter((x) => x.id !== item.id);
+      const targetId = item.id;
+      state.history = state.history.filter((x) => x.id !== targetId);
       localStorage.setItem(LS.history, JSON.stringify(state.history));
       renderHistory();
-      AppCore.postMemory("delete", { id: item.id });
+      AppCore.postMemory("delete", {
+        id: targetId,
+        text: item.text,
+        reply: item.reply,
+        ts: item.ts,
+        weather: item.weather,
+        mood: item.mood,
+        engine: item.engine
+      });
       updateMemoryStatsDisplay();
-      toast("信件已标记为 DELETED（对 AI 隐藏，可在后悔处恢复）");
+      toast("信件已标记为 DELETED（可在后悔处恢复）");
     }, 3000);
 
     list.appendChild(li);
@@ -1586,8 +1774,8 @@ async function loadRegretList() {
           <span>${item.date || (item.ts ? item.ts.slice(0, 10) : "未知日期")} · ${item.weather || "—"}</span>
           <span class="regret-tag">DELETED</span>
         </div>
-        <div class="regret-user-txt">来信：「${item.user_digest || item.text || "空"}」</div>
-        <div class="regret-reply-txt">回信：${item.reply_digest || item.reply || "—"}</div>
+        <div class="regret-user-txt">来信：「${item.user_text || item.user_digest || item.text || "空"}」</div>
+        <div class="regret-reply-txt">回信：${item.reply_text || item.reply_digest || item.reply || "—"}</div>
       </div>
       <button class="ghostbtn sm regret-single-btn" data-id="${epId}">回归</button>
     `;
@@ -1622,6 +1810,25 @@ async function restoreDeletedItems(ids) {
     ids: ids === "all" ? "all" : Array.from(ids),
   });
   if (res.ok) {
+    const restoredItems = res.items || [];
+    const existingIds = new Set(state.history.map((x) => x.id));
+    for (const ep of restoredItems) {
+      if (!existingIds.has(ep.id)) {
+        state.history.push({
+          id: ep.id,
+          ts: ep.ts || new Date().toISOString(),
+          text: ep.user_text || ep.user_digest || "（已恢复的信件）",
+          reply: ep.reply_text || ep.reply_digest || "……",
+          weather: ep.weather || "晴",
+          mood: ep.mood || "平静",
+          engine: ep.engine || "local",
+        });
+      }
+    }
+    state.history.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+    localStorage.setItem(LS.history, JSON.stringify(state.history));
+    renderHistory();
+
     toast(`成功将 ${res.restored} 封记忆回归！`);
     audio.chord();
     loadRegretList();
@@ -1634,279 +1841,166 @@ async function restoreDeletedItems(ids) {
 
 const settingsDrawer = $("#settings-drawer");
 
-async function loadSettingsUI() {
+function loadSettingsUI() {
   try {
     const cfg = AppCore.getConfig();
-    const mod = cfg.model || {};
-    const rep = cfg.reply || {};
+    $("#cfg-protocol").value = cfg.model?.protocol || "auto";
+    $("#cfg-endpoint").value = cfg.model?.endpoint || "";
+    $("#cfg-key").value = cfg.model?.api_key || "";
+    $("#cfg-model").value = cfg.model?.model || "";
+    $("#cfg-timeout").value = cfg.model?.timeout || 15;
+    $("#cfg-min-read").value = cfg.reply?.min_reading_ms || 3200;
+    $("#cfg-max-day").value = cfg.reply?.max_letters_per_day || 3;
+    $("#cfg-admin-pwd").value = cfg.memory?.admin_password || "";
 
-    $("#cfg-protocol").value = mod.protocol || "auto";
-    $("#cfg-endpoint").value = mod.endpoint || "";
-    $("#cfg-apikey").value = mod.api_key || "";
-    $("#cfg-model").value = mod.model || "";
-    $("#cfg-timeout").value = mod.timeout || 15;
-    $("#cfg-reading-ms").value = rep.min_reading_ms || 3200;
-    $("#cfg-daily-limit").value = rep.max_letters_per_day || 3;
+    const stat = AppCore.getStatus();
+    const tag = $("#cfg-mode-tag");
+    if (tag) {
+      tag.textContent = stat.mode === "model" ? "大模型直连" : "纯前端 / Toy 模式";
+    }
 
-    $("#cfg-file-path").textContent = "浏览器 LocalStorage (纯前端独立模式)";
-    $("#cfg-file-path").title = "LocalStorage 永久本地保存";
-    $("#cfg-mode-tag").textContent = "纯前端 / Toy 模式";
     updateMemoryStatsDisplay();
-  } catch (err) {
-    console.error("加载配置失败:", err);
+  } catch (e) {
+    console.warn("加载设置失败:", e);
   }
 }
 
-async function saveSettingsUI() {
+function updateMemoryStatsDisplay() {
+  try {
+    const mem = AppCore.getMemory();
+    const memPathEl = $("#cfg-mem-path");
+    const memStatEl = $("#cfg-mem-stat");
+    if (memPathEl) memPathEl.textContent = "浏览器 LocalStorage (纯静态运行)";
+    if (memStatEl) {
+      memStatEl.textContent = `有效 ${mem.active_count || mem.total_letters || 0} 封 · 已删 ${mem.deleted_count || 0} 封`;
+    }
+  } catch (e) {
+    console.warn("更新记忆面板失败:", e);
+  }
+}
+
+function saveSettingsUI() {
   const payload = {
     model: {
-      protocol: $("#cfg-protocol").value.trim() || "auto",
+      protocol: $("#cfg-protocol").value,
       endpoint: $("#cfg-endpoint").value.trim(),
-      api_key: $("#cfg-apikey").value.trim(),
+      api_key: $("#cfg-key").value.trim(),
       model: $("#cfg-model").value.trim(),
-      timeout: parseInt($("#cfg-timeout").value, 10) || 15,
+      timeout: Math.max(1, Math.min(120, parseInt($("#cfg-timeout").value, 10) || 15)),
     },
     reply: {
-      min_reading_ms: parseInt($("#cfg-reading-ms").value, 10) || 3200,
-      max_letters_per_day: parseInt($("#cfg-daily-limit").value, 10) || 3,
+      min_reading_ms: Math.max(0, parseInt($("#cfg-min-read").value, 10) || 3200),
+      max_letters_per_day: Math.max(1, parseInt($("#cfg-max-day").value, 10) || 3),
+    },
+    memory: {
+      path: "LocalStorage",
+      admin_password: $("#cfg-admin-pwd").value.trim(),
     },
   };
+
   AppCore.saveConfig(payload);
-  toast("设置已保存并生效");
+  toast("设置已保存并立即生效！");
   refreshStatus();
-  settingsDrawer.classList.remove("open");
-}
-
-async function resetSettingsUI() {
-  if (!confirm("确定要将所有设置恢复为默认值吗？")) return;
-  AppCore.resetConfig();
-  toast("已恢复默认设置");
   loadSettingsUI();
+}
+
+function resetSettingsUI() {
+  AppCore.resetConfig();
+  toast("已恢复默认设置（纯前端离线人格模式）");
   refreshStatus();
+  loadSettingsUI();
 }
 
-let rainRAF = null;
-function startRain(on) {
-  const canvas = $("#rain");
-  canvas.classList.toggle("raining", on);
-  if (!on) { cancelAnimationFrame(rainRAF); rainRAF = null; return; }
-  const card = herCard;
-  const size = () => {
-    canvas.width = card.clientWidth - 20;
-    canvas.height = card.clientHeight - 20;
-  };
-  size();
-  window.addEventListener("resize", size);
-  const drops = Array.from({ length: 70 }, () => ({
-    x: Math.random() * 2000,
-    y: Math.random() * 1200,
-    l: 8 + Math.random() * 10,
-    v: 2.2 + Math.random() * 2.6,
-  }));
-  const dark = document.documentElement.dataset.theme === "night";
-  const ctx = canvas.getContext("2d");
-  function frame() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = dark ? "rgba(178,196,232,0.34)" : "rgba(90,110,140,0.28)";
-    ctx.lineWidth = 1;
-    for (const d of drops) {
-      d.x = ((d.x % canvas.width) + canvas.width) % canvas.width;
-      d.y = (d.y + d.v) % canvas.height;
-      ctx.beginPath();
-      ctx.moveTo(d.x, d.y);
-      ctx.lineTo(d.x - d.l * 0.12, d.y + d.l);
-      ctx.stroke();
-    }
-    rainRAF = requestAnimationFrame(frame);
+function bindLongPress(btn, callback, holdMs = 3000) {
+  let timer = null;
+  let start = 0;
+  let raf = null;
+  const bar = btn.querySelector(".hold-progress");
+
+  function cancel() {
+    clearTimeout(timer);
+    timer = null;
+    btn.classList.remove("holding");
+    if (bar) bar.style.width = "0%";
+    if (raf) cancelAnimationFrame(raf);
   }
-  frame();
+
+  function update() {
+    if (!timer) return;
+    const progress = Math.min(100, ((Date.now() - start) / holdMs) * 100);
+    if (bar) bar.style.width = progress + "%";
+    if (progress < 100) raf = requestAnimationFrame(update);
+  }
+
+  function startHold(e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    cancel();
+    start = Date.now();
+    btn.classList.add("holding");
+    raf = requestAnimationFrame(update);
+    timer = setTimeout(() => {
+      cancel();
+      callback();
+    }, holdMs);
+  }
+
+  btn.addEventListener("mousedown", startHold);
+  btn.addEventListener("touchstart", startHold, { passive: true });
+  window.addEventListener("mouseup", cancel);
+  window.addEventListener("touchend", cancel);
+  window.addEventListener("touchcancel", cancel);
+  btn.addEventListener("mouseleave", cancel);
 }
-
-(function bokeh() {
-  const canvas = $("#bokeh");
-  const ctx = canvas.getContext("2d");
-  let W, H, parts = [];
-  function resize() {
-    W = canvas.width = window.innerWidth;
-    H = canvas.height = window.innerHeight;
-  }
-  resize();
-  window.addEventListener("resize", resize);
-  const N = 34;
-  for (let i = 0; i < N; i++) {
-    parts.push({
-      x: Math.random(), y: Math.random(),
-      r: 1 + Math.random() * 2.6,
-      vy: 0.04 + Math.random() * 0.16,
-      ph: Math.random() * Math.PI * 2,
-      a: 0.05 + Math.random() * 0.14,
-    });
-  }
-  if (REDUCED) return;
-  (function frame(t) {
-    const night = document.documentElement.dataset.theme === "night";
-    const col = night ? "150,168,214" : "176,141,87";
-    ctx.clearRect(0, 0, W, H);
-    for (const p of parts) {
-      p.y -= (p.vy / H);
-      p.x += Math.sin(t / 4000 + p.ph) * 0.00012;
-      if (p.y < -0.02) { p.y = 1.02; p.x = Math.random(); }
-      const tw = 0.65 + 0.35 * Math.sin(t / 1400 + p.ph);
-      ctx.beginPath();
-      ctx.arc(p.x * W, p.y * H, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${col},${(p.a * tw).toFixed(3)})`;
-      ctx.fill();
-    }
-    requestAnimationFrame(frame);
-  })(0);
-})();
-
-const audio = {
-  ctx: null,
-  master: null,
-  ensure() {
-    if (this.ctx) return this.ctx.state === "running" ? this.ctx : (this.ctx.resume(), this.ctx);
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = 0.9;
-    const delay = this.ctx.createDelay(1.0);
-    delay.delayTime.value = 0.42;
-    const fb = this.ctx.createGain();
-    fb.gain.value = 0.3;
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = "lowpass";
-    lp.frequency.value = 1600;
-    this.delay = delay; this.lp = lp;
-    this.master.connect(this.ctx.destination);
-    this.master.connect(lp);
-    lp.connect(delay);
-    delay.connect(fb);
-    fb.connect(delay);
-    delay.connect(this.ctx.destination);
-    return this.ctx;
-  },
-  tick() {
-    if (!state.sound) return;
-    const c = this.ensure();
-    if (!c) return;
-    const len = Math.floor(c.sampleRate * 0.03);
-    const buf = c.createBuffer(1, len, c.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = c.createBufferSource();
-    src.buffer = buf;
-    const bp = c.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = 2400;
-    const g = c.createGain();
-    g.gain.value = 0.05;
-    src.connect(bp); bp.connect(g); g.connect(this.master);
-    src.start();
-  },
-  thunk() {
-    if (!state.sound) return;
-    const c = this.ensure();
-    if (!c) return;
-    const o = c.createOscillator();
-    o.type = "sine";
-    o.frequency.setValueAtTime(96, c.currentTime);
-    o.frequency.exponentialRampToValueAtTime(52, c.currentTime + 0.2);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0.22, c.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.3);
-    o.connect(g); g.connect(this.master);
-    o.start(); o.stop(c.currentTime + 0.32);
-  },
-  chord() {
-    if (!state.sound) return;
-    const c = this.ensure();
-    if (!c) return;
-    const notes = [261.63, 329.63, 392.0, 523.25];
-    const t0 = c.currentTime + 0.05;
-    notes.forEach((f, i) => {
-      const o = c.createOscillator();
-      o.type = "triangle";
-      o.frequency.value = f;
-      const g = c.createGain();
-      g.gain.setValueAtTime(0.0001, t0 + i * 0.06);
-      g.gain.exponentialRampToValueAtTime(0.045, t0 + i * 0.06 + 1.1);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.06 + 5.2);
-      o.connect(g);
-      g.connect(this.master);
-      g.connect(this.delay);
-      o.start(t0 + i * 0.06);
-      o.stop(t0 + i * 0.06 + 5.6);
-    });
-  },
-};
-
-function onDraftInput() {
-  const n = draft.value.replace(/\s/g, "").length;
-  $("#char-count").textContent = `${n} 字`;
-  localStorage.setItem(LS.draft, draft.value);
-  audio.tick();
-}
-let draftTimer;
-draft.addEventListener("input", () => {
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(onDraftInput, 60);
-});
 
 function init() {
-  const theme = localStorage.getItem(LS.theme) || "day";
-  document.documentElement.dataset.theme = theme;
-  $("#theme-toggle").textContent = theme === "night" ? "☀" : "☾";
-  $("#theme-toggle").classList.toggle("on", theme === "night");
+  setTheme(localStorage.getItem(LS.theme) || "day");
 
   const soundBtn = $("#sound-toggle");
   soundBtn.classList.toggle("on", state.sound);
-  soundBtn.title = state.sound ? "环境音：开" : "环境音：关";
 
   const limit = $("#limit-toggle");
   limit.checked = state.unlimited;
+
+  const savedDraft = localStorage.getItem(LS.draft);
+  if (savedDraft) {
+    draft.value = savedDraft;
+    onDraftInput();
+  }
+
+  $("#my-date").textContent = fmtDate();
+  $("#my-time").textContent = fmtTime();
+
+  refreshStatus();
   refreshCounter();
+  renderHistory();
 
-  const now = new Date();
-  $("#my-date").textContent = fmtDate(now);
-  $("#my-time").textContent = fmtTime(now);
-  $("#her-date").textContent = `${fmtDate(now)} ${fmtTime(now)}`;
-
-  draft.value = localStorage.getItem(LS.draft) || "";
-  onDraftInput();
-
-  if (state.history.length) {
+  if (state.history.length > 0) {
     const last = state.history[state.history.length - 1];
+    $("#her-date").textContent = fmtDate(new Date(last.ts));
     showWeather(last.weather, last.mood);
     startRain(!!(last.weather && last.weather.includes("雨")));
     renderStatic(herBody, last.reply);
   } else {
-    showWeather("阴", "平静");
+    $("#her-date").textContent = "林离的信";
     renderStatic(herBody, FIRST_LETTER);
   }
-  renderHistory();
-  refreshStatus();
+
+  draft.addEventListener("input", onDraftInput);
+  draft.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      sendLetter();
+    }
+  });
 
   sendBtn.addEventListener("click", () => sendLetter());
-  $("#regen-btn").addEventListener("click", regenerateWithModel);
-  draft.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendLetter(); }
-  });
-
-  $("#theme-toggle").addEventListener("click", () => {
-    const next = document.documentElement.dataset.theme === "night" ? "day" : "night";
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem(LS.theme, next);
-    $("#theme-toggle").textContent = next === "night" ? "☀" : "☾";
-    $("#theme-toggle").classList.toggle("on", next === "night");
-  });
+  $("#regen-btn")?.addEventListener("click", regenerateWithModel);
+  $("#theme-toggle").addEventListener("click", toggleTheme);
 
   soundBtn.addEventListener("click", () => {
     state.sound = !state.sound;
-    localStorage.setItem(LS.sound, state.sound ? "1" : "0");
     soundBtn.classList.toggle("on", state.sound);
-    soundBtn.title = state.sound ? "环境音：开" : "环境音：关";
+    localStorage.setItem(LS.sound, state.sound ? "1" : "0");
     if (state.sound) { audio.ensure(); audio.chord(); }
   });
 
@@ -1920,10 +2014,11 @@ function init() {
   $("#history-close").addEventListener("click", () => historyDrawer.classList.remove("open"));
 
   bindLongPress($("#history-clear"), () => {
+    const oldHistory = [...state.history];
     state.history = [];
     localStorage.removeItem(LS.history);
     renderHistory();
-    AppCore.postMemory("clear");
+    AppCore.postMemory("clear", { items: oldHistory });
     updateMemoryStatsDisplay();
     toast("全部信件已标记为 DELETED（可在后悔处恢复）");
   }, 3000);
@@ -1937,10 +2032,11 @@ function init() {
   $("#cfg-reset-btn").addEventListener("click", resetSettingsUI);
 
   bindLongPress($("#cfg-reset-mem-btn"), () => {
+    const oldHistory = [...state.history];
     state.history = [];
     localStorage.removeItem(LS.history);
     renderHistory();
-    AppCore.postMemory("clear");
+    AppCore.postMemory("clear", { items: oldHistory });
     updateMemoryStatsDisplay();
     toast("记忆库已软清空（标记为 DELETED，对 AI 隐藏，可在后悔处恢复）");
   }, 3000);
@@ -1999,10 +2095,12 @@ function init() {
       }
     }
     if (regretDrawer.classList.contains("open")) {
-      if (!regretDrawer.contains(e.target) &&
-          e.target !== $("#history-regret-btn") &&
-          e.target !== $("#cfg-regret-btn") &&
-          !pwdDialog.contains(e.target)) {
+      if (
+        !regretDrawer.contains(e.target) &&
+        e.target !== $("#history-regret-btn") &&
+        e.target !== $("#cfg-regret-btn") &&
+        !pwdDialog.contains(e.target)
+      ) {
         regretDrawer.classList.remove("open");
       }
     }
