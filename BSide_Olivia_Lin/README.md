@@ -71,7 +71,7 @@ python -m skill.local_engine  # 跑本地人格引擎（无需任何模型，离
 | `model.protocol` | `auto` | 接口协议：`auto`（自动智能推断）/ `openai` / `gemini` / `anthropic` |
 | `model.api_key` | `test` | 模型调用 api key（sk-... 或 test） |
 | `model.endpoint` | `http://127.0.0.1:8045` | 模型端点（支持本地 mock、OpenAI 官方、DeepSeek、Claude、Ollama 等） |
-| `model.model` | `gemini-2.5-flash` | 模型名（如 `deepseek-chat`、`gpt-4o`、`claude-3-5-sonnet`、`gemini-2.5-flash`） |
+| `model.model` | `gemini-2.5-flash` | 模型名（如 `deepseek-v4-flash`、`gpt-4o`、`claude-3-5-sonnet`、`gemini-2.5-flash`） |
 | `model.timeout` | `15` | 模型调用超时（秒），超时即降级本地引擎 |
 | `reply.min_reading_ms` | `3200` | 前端"读信"最短等待（保留书信节奏感） |
 | `reply.max_letters_per_day` | `3` | 每日信件上限（前端"不限量（演示）"可放开） |

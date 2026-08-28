@@ -805,7 +805,7 @@ var AppCoreExports = (() => {
         "Authorization": `Bearer ${config.api_key || "test"}`
       },
       body: JSON.stringify({
-        model: config.model || "deepseek-chat",
+        model: config.model || "deepseek-v4-flash",
         messages: [
           { role: "system", content: system },
           { role: "user", content: userText }
