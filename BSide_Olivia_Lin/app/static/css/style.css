@@ -621,7 +621,38 @@ body::before {
   border-color: var(--seal);
 }
 .regret-drawer {
-  width: min(450px, 92vw);
+  width: min(460px, 94vw);
+}
+.regret-filter-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--line);
+}
+.filter-tab {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--paper) 60%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  white-space: nowrap;
+}
+.filter-tab:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.filter-tab.active {
+  background: var(--seal);
+  color: var(--paper);
+  border-color: var(--seal);
+  font-weight: 500;
 }
 .regret-toolbar {
   display: flex;

@@ -1175,6 +1175,7 @@ const state = {
   inspireIdx: 0,
   adminPassword: "",
   deletedItems: [],
+  regretFilter: "all",
   selectedDeletedIds: new Set(),
 };
 
@@ -1762,31 +1763,64 @@ async function verifyAndEnterRegret() {
   }
 }
 
-async function loadRegretList() {
+function getFilteredDeletedItems() {
+  if (state.regretFilter === "model") {
+    return state.deletedItems.filter((x) => x.engine === "model");
+  }
+  if (state.regretFilter === "local") {
+    return state.deletedItems.filter((x) => x.engine !== "model");
+  }
+  return state.deletedItems;
+}
+
+function updateRegretFilterTabsUI() {
+  const allCount = state.deletedItems.length;
+  const modelCount = state.deletedItems.filter((x) => x.engine === "model").length;
+  const localCount = state.deletedItems.filter((x) => x.engine !== "model").length;
+
+  const tabAll = $("#regret-tab-all");
+  const tabModel = $("#regret-tab-model");
+  const tabLocal = $("#regret-tab-local");
+  if (tabAll) tabAll.textContent = `全部 (${allCount})`;
+  if (tabModel) tabModel.textContent = `🤖 模型 (${modelCount})`;
+  if (tabLocal) tabLocal.textContent = `🌱 本地 (${localCount})`;
+
+  $$(".filter-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.filter === state.regretFilter);
+  });
+}
+
+function renderRegretListUI() {
   const list = $("#regret-list");
   const empty = $("#regret-empty");
   list.innerHTML = "";
-  state.selectedDeletedIds.clear();
-  updateRegretSelectionUI();
 
-  const res = AppCore.postMemory("regret", { password: state.adminPassword });
-  if (!res.ok) {
-    toast(res.error || "加载后悔处失败");
-    return;
+  updateRegretFilterTabsUI();
+  const visibleItems = getFilteredDeletedItems();
+
+  empty.style.display = visibleItems.length ? "none" : "block";
+  if (visibleItems.length === 0) {
+    if (state.deletedItems.length > 0) {
+      empty.textContent = "该分类下暂无已删信件。";
+    } else {
+      empty.textContent = "后悔处空空如也，没有被删的记忆或信件。";
+    }
   }
-  state.deletedItems = res.deleted || [];
-  empty.style.display = state.deletedItems.length ? "none" : "block";
 
-  [...state.deletedItems].reverse().forEach((item) => {
+  [...visibleItems].reverse().forEach((item) => {
     const li = document.createElement("li");
     li.className = "regret-item";
     const epId = item.id || `ep_${item.ts}`;
+    const isModel = item.engine === "model";
     li.innerHTML = `
-      <input type="checkbox" data-id="${epId}" class="regret-chk">
+      <input type="checkbox" data-id="${epId}" class="regret-chk" ${state.selectedDeletedIds.has(epId) ? "checked" : ""}>
       <div class="regret-item-content">
         <div class="regret-meta">
           <span>${item.date || (item.ts ? item.ts.slice(0, 10) : "未知日期")} · ${item.weather || "—"}</span>
-          <span class="regret-tag">DELETED</span>
+          <div>
+            <span class="engine-badge ${isModel ? "badge-model" : "badge-local"}">${isModel ? "🤖 模型" : "🌱 本地"}</span>
+            <span class="regret-tag">DELETED</span>
+          </div>
         </div>
         <div class="regret-user-txt">来信：「${item.user_text || item.user_digest || item.text || "空"}」</div>
         <div class="regret-reply-txt">回信：${item.reply_text || item.reply_digest || item.reply || "—"}</div>
@@ -1807,15 +1841,43 @@ async function loadRegretList() {
 
     list.appendChild(li);
   });
+
+  updateRegretSelectionUI();
+}
+
+async function loadRegretList() {
+  state.selectedDeletedIds.clear();
+  const res = AppCore.postMemory("regret", { password: state.adminPassword });
+  if (!res.ok) {
+    toast(res.error || "加载后悔处失败");
+    return;
+  }
+  state.deletedItems = res.deleted || [];
+  renderRegretListUI();
 }
 
 function updateRegretSelectionUI() {
-  const n = state.selectedDeletedIds.size;
+  const visibleItems = getFilteredDeletedItems();
+  const visibleIds = visibleItems.map((x) => x.id || `ep_${x.ts}`);
+  const visibleSelectedCount = visibleIds.filter((id) => state.selectedDeletedIds.has(id)).length;
+
   const btn = $("#regret-restore-selected");
-  btn.disabled = n === 0;
-  btn.textContent = `回归选中 (${n})`;
+  if (btn) {
+    btn.disabled = state.selectedDeletedIds.size === 0;
+    btn.textContent = `回归选中 (${state.selectedDeletedIds.size})`;
+  }
+
+  const filteredBtn = $("#regret-restore-filtered");
+  if (filteredBtn) {
+    filteredBtn.disabled = visibleItems.length === 0;
+    const filterName = state.regretFilter === "model" ? "模型" : state.regretFilter === "local" ? "本地" : "全部";
+    filteredBtn.textContent = `回归${filterName} (${visibleItems.length})`;
+  }
+
   const checkAll = $("#regret-check-all");
-  checkAll.checked = state.deletedItems.length > 0 && n === state.deletedItems.length;
+  if (checkAll) {
+    checkAll.checked = visibleItems.length > 0 && visibleSelectedCount === visibleItems.length;
+  }
 }
 
 async function restoreDeletedItems(ids) {
@@ -2066,20 +2128,35 @@ function init() {
     if (e.key === "Enter") { e.preventDefault(); verifyAndEnterRegret(); }
   });
 
+  $$(".filter-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      state.regretFilter = tab.dataset.filter || "all";
+      state.selectedDeletedIds.clear();
+      renderRegretListUI();
+    });
+  });
+
   $("#regret-check-all").addEventListener("change", (e) => {
     const on = e.target.checked;
-    $$(".regret-chk").forEach((chk) => {
-      chk.checked = on;
-      const id = chk.dataset.id;
+    const visibleItems = getFilteredDeletedItems();
+    visibleItems.forEach((x) => {
+      const id = x.id || `ep_${x.ts}`;
       if (on) state.selectedDeletedIds.add(id);
       else state.selectedDeletedIds.delete(id);
     });
-    updateRegretSelectionUI();
+    renderRegretListUI();
   });
 
   $("#regret-restore-selected").addEventListener("click", () => {
     if (state.selectedDeletedIds.size === 0) return;
     restoreDeletedItems(state.selectedDeletedIds);
+  });
+
+  $("#regret-restore-filtered")?.addEventListener("click", () => {
+    const visibleItems = getFilteredDeletedItems();
+    if (visibleItems.length === 0) { toast("当前分类暂无已删信件"); return; }
+    const ids = visibleItems.map((x) => x.id || `ep_${x.ts}`);
+    restoreDeletedItems(ids);
   });
 
   $("#regret-restore-all").addEventListener("click", () => {

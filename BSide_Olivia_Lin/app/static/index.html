@@ -218,17 +218,23 @@
     <div class="drawer-head">
       <div>
         <h2>被删内容管理的后悔处 ⏳</h2>
-        <span class="drawer-sub">标记为 DELETED 的条目对 AI 及前端隐藏，在此可选择回归</span>
+        <span class="drawer-sub">标记为 DELETED 的条目对 AI 及前端隐藏，在此可分类选择回归</span>
       </div>
       <button id="regret-close" class="iconbtn" aria-label="关闭">×</button>
+    </div>
+    <div class="regret-filter-tabs">
+      <button class="filter-tab active" data-filter="all" id="regret-tab-all">全部 (0)</button>
+      <button class="filter-tab" data-filter="model" id="regret-tab-model">🤖 模型生成 (0)</button>
+      <button class="filter-tab" data-filter="local" id="regret-tab-local">🌱 本地引擎 (0)</button>
     </div>
     <div class="regret-toolbar">
       <label class="regret-select-all">
         <input type="checkbox" id="regret-check-all">
-        <span>全选</span>
+        <span id="regret-check-label">全选当前分类</span>
       </label>
       <div class="regret-actions">
         <button id="regret-restore-selected" class="ghostbtn sm" disabled>回归选中 (0)</button>
+        <button id="regret-restore-filtered" class="ghostbtn sm" title="将当前分类下的全部已删信件一键回归">回归当前分类</button>
         <button id="regret-restore-all" class="ghostbtn sm">全部回归</button>
       </div>
     </div>
