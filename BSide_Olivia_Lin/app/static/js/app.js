@@ -2,7 +2,6 @@
    林离的信箱 · BSide Letters (纯前端 TypeScript 核心编译版)
    零服务端依赖 · 本地离线人格引擎 + 浏览器直连大模型 API + LocalStorage 分级记忆与后悔处
    ============================================================ */
-"use strict";
 
 "use strict";
 var AppCoreExports = (() => {
@@ -24,7 +23,7 @@ var AppCoreExports = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // ../BSide_Olivia_Lin/src/index.ts
+  // src/index.ts
   var index_exports = {};
   __export(index_exports, {
     ACK: () => ACK,
@@ -80,7 +79,7 @@ var AppCoreExports = (() => {
     weatherFor: () => weatherFor
   });
 
-  // ../BSide_Olivia_Lin/src/persona.ts
+  // src/persona.ts
   var OLIVIA_LIN_MD = `# \u6797\u79BB (Olivia Lin) \xB7 \u4EBA\u683C\u84B8\u998F\u6863\u6848
 
 > \u84B8\u998F\u5BF9\u8C61\uFF1A\u300ABSide: Olivia Lin\u300B\uFF08\u7C73\u54C8\u6E38\u300C\u7A3B\u6D77\u6851\u7530\u5DE5\u4F5C\u5BA4\u300DAI \u966A\u4F34\u5E94\u7528\uFF09\u6838\u5FC3\u89D2\u8272 \u6797\u79BB / Olivia Lin\u3002
@@ -246,7 +245,7 @@ var AppCoreExports = (() => {
     return parts.join("\n\n---\n\n");
   }
 
-  // ../BSide_Olivia_Lin/src/localEngine.ts
+  // src/localEngine.ts
   var WORDS = {
     farewell: ["\u544A\u522B", "\u518D\u89C1", "\u6700\u540E\u4E00", "\u505C\u670D", "\u4E0B\u7EBF", "\u505C\u6B62\u8FD0\u8425", "\u5173\u95ED\u4E86", "\u4E0D\u5728\u4E86", "\u4EE5\u540E\u4E0D\u80FD", "\u8981\u8D70\u4E86", "\u6C38\u522B", "\u6700\u540E\u4E00\u5C01"],
     sad: ["\u96BE\u8FC7", "\u4F4E\u843D", "\u6CAE\u4E27", "\u5931\u843D", "\u60F3\u54ED", "\u54ED\u4E86", "\u54ED", "\u59D4\u5C48", "\u5B64\u72EC", "\u5B64\u5355", "\u8FF7\u832B", "\u627E\u4E0D\u5230", "\u6CA1\u610F\u601D", "\u6CA1\u6709\u610F\u601D", "\u6491\u4E0D\u4F4F", "\u5FC3\u7D2F", "\u4F24\u5FC3", "emo"],
@@ -550,7 +549,7 @@ var AppCoreExports = (() => {
     return { weather: w, mood: moodFor(a, w) };
   }
 
-  // ../BSide_Olivia_Lin/src/memoryBank.ts
+  // src/memoryBank.ts
   var MAX_EPISODES = 30;
   var RECENT_IN_PROMPT = 5;
   var TOPICS_IN_PROMPT = 3;
@@ -836,7 +835,7 @@ var AppCoreExports = (() => {
     return null;
   }
 
-  // ../BSide_Olivia_Lin/src/modelClient.ts
+  // src/modelClient.ts
   function detectProtocol(proto, endpoint, modelName) {
     const p = (proto || "auto").trim().toLowerCase();
     if (p === "openai" || p === "gemini" || p === "anthropic") return p;
@@ -941,7 +940,7 @@ var AppCoreExports = (() => {
     return null;
   }
 
-  // ../BSide_Olivia_Lin/src/config.ts
+  // src/config.ts
   var LS_CONFIG_KEY = "olivia_config_v2";
   var DEFAULT_CONFIG = {
     model: {
@@ -993,7 +992,7 @@ var AppCoreExports = (() => {
     return { ...DEFAULT_CONFIG };
   }
 
-  // ../BSide_Olivia_Lin/src/appCore.ts
+  // src/appCore.ts
   var AppCore = class {
     static getConfig() {
       return loadAppConfig();
@@ -1115,11 +1114,10 @@ var AppCoreExports = (() => {
 })();
 
 
+
 var AppCore = (typeof AppCoreExports !== 'undefined' && AppCoreExports.AppCore) ? AppCoreExports.AppCore : (typeof window !== 'undefined' ? window.AppCore : globalThis.AppCore);
 if (typeof window !== 'undefined') { window.AppCore = AppCore; }
 if (typeof globalThis !== 'undefined') { globalThis.AppCore = AppCore; }
-
-
 
 /* ============================================================
    林离的信箱 · 前端交互与 UI 渲染 (UI Layer)
@@ -1139,7 +1137,7 @@ const LS = {
 
 const WEATHER_CLASS = { "晴": "w-sunny", "阴": "w-cloudy", "小雨": "w-shower", "雨": "w-rain" };
 const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
-const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const REDUCED = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false;
 
 const FIRST_LETTER = [
   "你的信到了——不，准确地说，这是我第一次写信给你。",
@@ -1168,9 +1166,9 @@ const INSPIRE = [
 ];
 
 const state = {
-  sound: localStorage.getItem(LS.sound) === "1",
-  unlimited: localStorage.getItem(LS.limit) !== "0",
-  history: JSON.parse(localStorage.getItem(LS.history) || "[]"),
+  sound: typeof localStorage !== 'undefined' ? localStorage.getItem(LS.sound) === "1" : false,
+  unlimited: typeof localStorage !== 'undefined' ? localStorage.getItem(LS.limit) !== "0" : true,
+  history: typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem(LS.history) || "[]") : [],
   sending: false,
   inspireIdx: 0,
   adminPassword: "",
@@ -1184,11 +1182,13 @@ const meta = { minReadingMs: 3200, dailyLimit: 3 };
 function todayKey() { return new Date().toISOString().slice(0, 10); }
 
 function sentToday() {
+  if (typeof localStorage === 'undefined') return 0;
   const c = JSON.parse(localStorage.getItem(LS.count) || "null");
   return c && c.date === todayKey() ? c.n : 0;
 }
 
 function bumpSent() {
+  if (typeof localStorage === 'undefined') return;
   localStorage.setItem(LS.count, JSON.stringify({ date: todayKey(), n: sentToday() + 1 }));
 }
 
@@ -1200,9 +1200,10 @@ function fmtTime(d = new Date()) {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-let toastTimer;
+let toastTimer = null;
 function toast(msg) {
   const t = $("#toast");
+  if (!t) return;
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(toastTimer);
@@ -1211,6 +1212,7 @@ function toast(msg) {
 
 function refreshCounter() {
   const el = $("#day-counter");
+  if (!el) return;
   if (state.unlimited) {
     el.textContent = `今日已寄 ${sentToday()} 封 · 不限量（演示）`;
   } else {
@@ -1218,211 +1220,210 @@ function refreshCounter() {
   }
 }
 
-function updateCharCount(n) {
-  $("#char-count").textContent = `${n} 字`;
+function showWeather(weather, mood) {
+  const chip = $("#weather-chip");
+  if (!chip) return;
+  chip.className = "weather-chip " + (WEATHER_CLASS[weather] || "w-cloudy");
+  chip.hidden = !weather;
+  const wTxt = $("#weather-text");
+  if (wTxt) wTxt.textContent = weather || "";
+  const moodChip = $("#mood-chip");
+  if (moodChip) {
+    moodChip.hidden = !mood;
+    moodChip.textContent = mood ? `心情 · ${mood}` : "";
+  }
 }
 
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem(LS.theme, theme);
   const btn = $("#theme-toggle");
-  btn.textContent = theme === "night" ? "☀" : "☾";
-  btn.title = theme === "night" ? "切换至日间" : "切换至夜间";
+  if (btn) {
+    btn.textContent = theme === "night" ? "☀" : "☾";
+    btn.classList.toggle("on", theme === "night");
+  }
 }
 
 function toggleTheme() {
-  const cur = document.documentElement.dataset.theme || "day";
-  setTheme(cur === "day" ? "night" : "day");
+  const current = document.documentElement.dataset.theme || "day";
+  const next = current === "night" ? "day" : "night";
+  setTheme(next);
+  localStorage.setItem(LS.theme, next);
 }
 
-class SoundFX {
-  constructor() {
-    this.ctx = null;
-    this.rainGain = null;
+function updateCharCount(len) {
+  const el = $("#char-count");
+  if (el) el.textContent = `${len} 字`;
+}
+
+let rainRAF = null;
+function startRain(on) {
+  const canvas = $("#rain");
+  if (!canvas) return;
+  canvas.classList.toggle("raining", on);
+  if (!on) {
+    if (rainRAF) { cancelAnimationFrame(rainRAF); rainRAF = null; }
+    return;
   }
+  const card = $("#her-card");
+  if (!card) return;
+  canvas.width = card.clientWidth - 20;
+  canvas.height = card.clientHeight - 20;
+  const drops = Array.from({ length: 60 }, () => ({
+    x: Math.random() * 2000,
+    y: Math.random() * 1200,
+    l: 8 + Math.random() * 10,
+    v: 2.2 + Math.random() * 2.6,
+  }));
+  const ctx = canvas.getContext("2d");
+  function frame() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const dark = document.documentElement.dataset.theme === "night";
+    ctx.strokeStyle = dark ? "rgba(178,196,232,0.34)" : "rgba(90,110,140,0.28)";
+    ctx.lineWidth = 1;
+    for (const d of drops) {
+      d.x = ((d.x % canvas.width) + canvas.width) % canvas.width;
+      d.y = (d.y + d.v) % canvas.height;
+      ctx.beginPath();
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x - d.l * 0.12, d.y + d.l);
+      ctx.stroke();
+    }
+    rainRAF = requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+const audio = {
+  ctx: null,
+  master: null,
+  delay: null,
   ensure() {
-    if (!this.ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) this.ctx = new AC();
-    }
-    if (this.ctx && this.ctx.state === "suspended") {
-      this.ctx.resume().catch(() => {});
-    }
-  }
-  chord() {
-    if (!state.sound || !this.ctx) return;
-    this.ensure();
-    const notes = [261.63, 329.63, 392.0, 523.25, 659.25];
-    const now = this.ctx.currentTime;
-    notes.forEach((freq, i) => {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, now + i * 0.06);
-      gain.gain.setValueAtTime(0, now + i * 0.06);
-      gain.gain.linearRampToValueAtTime(0.06, now + i * 0.06 + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.06 + 1.8);
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.start(now + i * 0.06);
-      osc.stop(now + i * 0.06 + 1.9);
-    });
-  }
+    if (this.ctx) return this.ctx.state === "running" ? this.ctx : (this.ctx.resume(), this.ctx);
+    const AC = typeof window !== 'undefined' ? (window.AudioContext || window.webkitAudioContext) : null;
+    if (!AC) return null;
+    this.ctx = new AC();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = 0.9;
+    const delay = this.ctx.createDelay(1.0);
+    delay.delayTime.value = 0.42;
+    const fb = this.ctx.createGain();
+    fb.gain.value = 0.3;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 1600;
+    this.delay = delay;
+    this.master.connect(this.ctx.destination);
+    this.master.connect(lp);
+    lp.connect(delay);
+    delay.connect(fb);
+    fb.connect(delay);
+    delay.connect(this.ctx.destination);
+    return this.ctx;
+  },
+  tick() {
+    if (!state.sound) return;
+    const c = this.ensure();
+    if (!c) return;
+    const len = Math.floor(c.sampleRate * 0.03);
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    const bp = c.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 2400;
+    const g = c.createGain();
+    g.gain.value = 0.05;
+    src.connect(bp); bp.connect(g); g.connect(this.master);
+    src.start();
+  },
   thump() {
-    if (!state.sound || !this.ctx) return;
-    this.ensure();
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    const now = this.ctx.currentTime;
-    osc.type = "triangle";
-    osc.frequency.setValueAtTime(90, now);
-    osc.frequency.exponentialRampToValueAtTime(35, now + 0.18);
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.24);
-  }
-}
-const audio = new SoundFX();
+    if (!state.sound) return;
+    const c = this.ensure();
+    if (!c) return;
+    const o = c.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(96, c.currentTime);
+    o.frequency.exponentialRampToValueAtTime(52, c.currentTime + 0.2);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.22, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.3);
+    o.connect(g); g.connect(this.master);
+    o.start(); o.stop(c.currentTime + 0.32);
+  },
+  chord() {
+    if (!state.sound) return;
+    const c = this.ensure();
+    if (!c) return;
+    const notes = [261.63, 329.63, 392.0, 523.25];
+    const t0 = c.currentTime + 0.05;
+    notes.forEach((f, i) => {
+      const o = c.createOscillator();
+      o.type = "triangle";
+      o.frequency.value = f;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + i * 0.06);
+      g.gain.exponentialRampToValueAtTime(0.045, t0 + i * 0.06 + 1.1);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.06 + 5.2);
+      o.connect(g);
+      g.connect(this.master);
+      if (this.delay) g.connect(this.delay);
+      o.start(t0 + i * 0.06);
+      o.stop(t0 + i * 0.06 + 5.6);
+    });
+  },
+};
 
-let typeTimer = null;
-function typewrite(el, text, fast = false, onDone) {
-  clearTimeout(typeTimer);
-  el.innerHTML = "";
-  let i = 0;
-  const len = text.length;
-
-  let caret = document.createElement("span");
+function typewrite(container, text, fast = false, onDone) {
+  container.innerHTML = "";
+  const paras = text.replace(/\r/g, "").split(/\n{2,}/);
+  const caret = document.createElement("span");
   caret.className = "caret";
-  el.appendChild(caret);
+  let pi = 0, ci = 0, pEl = null;
+
+  function ensurePara() {
+    if (pEl) return;
+    pEl = document.createElement("p");
+    if (paras[pi].trimStart().startsWith("—— ")) pEl.classList.add("sign");
+    container.appendChild(pEl);
+    pEl.appendChild(caret);
+  }
 
   function step() {
-    if (i < len) {
-      const ch = text[i++];
-      if (ch === "\n") {
-        if (text[i] === "\n") {
-          i++;
-          const br1 = document.createElement("br");
-          const br2 = document.createElement("br");
-          el.insertBefore(br1, caret);
-          el.insertBefore(br2, caret);
-        } else {
-          el.insertBefore(document.createElement("br"), caret);
-        }
-      } else {
-        el.insertBefore(document.createTextNode(ch), caret);
-      }
+    if (pi >= paras.length) {
+      if (caret.parentNode) caret.remove();
+      onDone && onDone();
+      return;
+    }
+    const para = paras[pi];
+    ensurePara();
+    if (ci < para.length) {
+      const ch = para[ci++];
+      pEl.insertBefore(document.createTextNode(ch), caret);
       let d = fast ? 4 : 16 + Math.random() * 30;
       if ("。！？…".includes(ch)) d += fast ? 40 : 240;
       else if ("，、；：”".includes(ch)) d += fast ? 20 : 100;
-      typeTimer = setTimeout(step, d);
+      setTimeout(step, d);
     } else {
-      setTimeout(() => caret.remove(), 1200);
-      if (onDone) onDone();
+      pi++;
+      ci = 0;
+      pEl = null;
+      container.scrollTop = container.scrollHeight;
+      setTimeout(step, fast ? 10 : 260);
     }
   }
   step();
 }
 
-function renderStatic(el, text) {
-  clearTimeout(typeTimer);
-  el.innerHTML = "";
-  const paras = text.split("\n\n");
-  paras.forEach((p) => {
-    const pEl = document.createElement("p");
-    if (p.startsWith("——")) {
-      pEl.className = "sign";
-      pEl.textContent = p;
-    } else {
-      pEl.innerHTML = p.replace(/\n/g, "<br>");
-    }
-    el.appendChild(pEl);
+function renderStatic(container, text) {
+  container.innerHTML = "";
+  text.replace(/\r/g, "").split(/\n{2,}/).forEach((para) => {
+    const p = document.createElement("p");
+    if (para.trimStart().startsWith("—— ")) p.classList.add("sign");
+    p.textContent = para;
+    container.appendChild(p);
   });
-}
-
-class RainEffect {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext("2d");
-    this.drops = [];
-    this.running = false;
-    this.raf = null;
-    this.resize = this.resize.bind(this);
-    this.loop = this.loop.bind(this);
-    window.addEventListener("resize", this.resize);
-  }
-  resize() {
-    const r = this.canvas.parentElement.getBoundingClientRect();
-    this.canvas.width = r.width;
-    this.canvas.height = r.height;
-  }
-  start() {
-    this.resize();
-    this.canvas.classList.add("raining");
-    if (this.running) return;
-    this.running = true;
-    this.drops = Array.from({ length: 45 }, () => ({
-      x: Math.random() * this.canvas.width,
-      y: Math.random() * this.canvas.height,
-      len: 8 + Math.random() * 14,
-      spd: 3 + Math.random() * 4,
-      alpha: 0.15 + Math.random() * 0.25,
-    }));
-    this.loop();
-  }
-  stop() {
-    this.running = false;
-    this.canvas.classList.remove("raining");
-    if (this.raf) cancelAnimationFrame(this.raf);
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-  }
-  loop() {
-    if (!this.running) return;
-    const { ctx, canvas } = this;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "rgba(120, 150, 190, 0.4)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (const d of this.drops) {
-      ctx.moveTo(d.x, d.y);
-      ctx.lineTo(d.x - 1, d.y + d.len);
-      d.y += d.spd;
-      d.x -= 0.5;
-      if (d.y > canvas.height) {
-        d.y = -d.len;
-        d.x = Math.random() * (canvas.width + 50);
-      }
-    }
-    ctx.stroke();
-    this.raf = requestAnimationFrame(this.loop);
-  }
-}
-
-let rain;
-function startRain(on) {
-  if (!rain) rain = new RainEffect($("#rain"));
-  if (on) rain.start();
-  else rain.stop();
-}
-
-function showWeather(weather, mood) {
-  const wEl = $("#weather-chip");
-  const mEl = $("#mood-chip");
-  if (weather) {
-    wEl.className = "weather-chip " + (WEATHER_CLASS[weather] || "w-sunny");
-    $("#weather-text").textContent = weather;
-    wEl.hidden = false;
-  } else {
-    wEl.hidden = true;
-  }
-  if (mood) {
-    mEl.textContent = mood;
-    mEl.hidden = false;
-  } else {
-    mEl.hidden = true;
-  }
 }
 
 let readingInterval = null;
@@ -1430,6 +1431,7 @@ function showReading(show) {
   const r = $("#reading");
   const k = $("#keys");
   const t = $("#reading-text");
+  if (!r || !k || !t) return;
   clearInterval(readingInterval);
   if (show) {
     r.hidden = false;
@@ -1449,6 +1451,7 @@ function showReading(show) {
 }
 
 function flyEnvelope(fromEl, toEl, onDone) {
+  if (!fromEl || !toEl) { if (onDone) onDone(); return; }
   const env = document.createElement("div");
   env.className = "envelope";
   env.innerHTML = `
@@ -1486,24 +1489,47 @@ function flyEnvelope(fromEl, toEl, onDone) {
   }, 1050);
 }
 
-function refreshStatus() {
+async function refreshStatus() {
   try {
-    const data = AppCore.getStatus();
+    let data = null;
+    try {
+      const r = await fetch("/api/status");
+      if (r.ok) {
+        const s = await r.json();
+        data = {
+          ok: true,
+          mode: s.model_up ? "model" : "local_engine",
+          model: s.model || (s.endpoint ? (new URL(s.endpoint).port || s.endpoint) : ""),
+          model_up: s.model_up,
+          endpoint: s.endpoint,
+          protocol: s.protocol || "auto",
+          active_protocol: s.active_protocol || "OpenAI",
+          reply: s.reply,
+        };
+      }
+    } catch (_) {}
+
+    if (!data) {
+      data = AppCore.getStatus();
+    }
+
     const pill = $("#engine-pill");
     const txt = $("#engine-text");
-    pill.classList.toggle("ok", !!data.ok);
+    if (pill) pill.classList.toggle("ok", !!(data.model_up || data.ok));
 
-    if (data.mode === "model") {
-      txt.textContent = data.model ? `模型 · ${data.model}` : `模型 (${data.active_protocol || "OpenAI"})`;
-      pill.title = `端点: ${data.endpoint}\n协议: ${data.active_protocol || data.protocol}`;
-    } else {
-      txt.textContent = "本地离线人格引擎";
-      pill.title = "未连接大模型端点，当前由内置的林离人格启发引擎生成回信。可在「设置」中配置 API Key。";
+    if (txt) {
+      if (data.mode === "model" || data.model_up) {
+        txt.textContent = data.model ? `模型 · ${data.model}` : `模型 (${data.active_protocol || "OpenAI"})`;
+        if (pill) pill.title = `端点: ${data.endpoint}\n协议: ${data.active_protocol || data.protocol}`;
+      } else {
+        txt.textContent = "本地离线人格引擎";
+        if (pill) pill.title = "未连接大模型端点，当前由内置的林离人格启发引擎生成回信。可在「设置」中配置 API Key。";
+      }
     }
 
     const regenBtn = $("#regen-btn");
     if (regenBtn) {
-      regenBtn.hidden = data.mode !== "model";
+      regenBtn.hidden = !(data.mode === "model" || data.model_up);
     }
 
     if (data.reply) {
@@ -1521,6 +1547,7 @@ const wax = $("#wax-seal");
 const herBody = $("#her-body");
 
 function onDraftInput() {
+  if (!draft) return;
   const text = draft.value;
   updateCharCount(text.trim().length);
   localStorage.setItem(LS.draft, text);
@@ -1528,21 +1555,25 @@ function onDraftInput() {
 
 function setSending(sending) {
   state.sending = sending;
-  sendBtn.disabled = sending;
-  draft.disabled = sending;
-  $("#send-btn .send-label").textContent = sending ? "寄出中…" : "封缄寄出";
+  if (sendBtn) sendBtn.disabled = sending;
+  if (draft) draft.disabled = sending;
+  const lbl = $("#send-btn .send-label");
+  if (lbl) lbl.textContent = sending ? "寄出中…" : "封缄寄出";
 }
 
 async function sendLetter(opts = {}) {
   const { force = "auto", replaceLast = false } = opts;
   if (state.sending) return;
 
-  const text = draft.value.trim();
+  const text = draft ? draft.value.trim() : "";
   if (!text) {
-    $("#my-card").classList.add("shake");
-    setTimeout(() => $("#my-card").classList.remove("shake"), 450);
+    const card = $("#my-card");
+    if (card) {
+      card.classList.add("shake");
+      setTimeout(() => card.classList.remove("shake"), 450);
+    }
     toast("信纸还是空的。写一句话也行。");
-    draft.focus();
+    if (draft) draft.focus();
     return;
   }
 
@@ -1551,7 +1582,6 @@ async function sendLetter(opts = {}) {
     return;
   }
 
-  // 若为重写替换，记录被覆盖的旧信件
   let oldItemToArchive = null;
   if (replaceLast && state.history.length > 0) {
     const last = state.history[state.history.length - 1];
@@ -1563,8 +1593,10 @@ async function sendLetter(opts = {}) {
   setSending(true);
   audio.ensure();
 
-  wax.classList.remove("faded");
-  wax.classList.add("stamped");
+  if (wax) {
+    wax.classList.remove("faded");
+    wax.classList.add("stamped");
+  }
   audio.thump();
 
   await sleep(650);
@@ -1577,31 +1609,48 @@ async function sendLetter(opts = {}) {
 
   showReading(true);
   startRain(false);
-  herBody.innerHTML = "";
+  if (herBody) herBody.innerHTML = "";
 
   const t0 = Date.now();
-  let data;
+  let data = null;
+
+  // 优先尝试与服务端通信（EXE 模式）
   try {
-    data = await AppCore.sendLetter(text, force);
-  } catch (err) {
-    console.error("信件处理异常:", err);
-    data = {
-      ok: true,
-      reply: "（信在途中遇到了点风，但她收到了。）\n\n信我读过了。今天就先坐一会儿吧。\n\n—— 林离",
-      weather: "阴",
-      mood: "平静",
-      engine: "local",
-    };
+    const r = await fetch("/api/letter", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, force }),
+    });
+    if (r.ok) {
+      data = await r.json();
+    }
+  } catch (_) {}
+
+  // 纯静态 / Toy 降级
+  if (!data) {
+    try {
+      data = await AppCore.sendLetter(text, force);
+    } catch (err) {
+      console.error("信件处理异常:", err);
+      data = {
+        ok: true,
+        reply: "（信在途中遇到了点风，但她收到了。）\n\n信我读过了。今天就先坐一会儿吧。\n\n—— 林离",
+        weather: "阴",
+        mood: "平静",
+        engine: "local",
+      };
+    }
   }
 
   const elapsed = Date.now() - t0;
   await sleep(Math.max(0, meta.minReadingMs - elapsed));
 
   showReading(false);
-  wax.classList.add("faded");
+  if (wax) wax.classList.add("faded");
 
   try {
-    $("#her-date").textContent = `${fmtDate()} ${fmtTime()}`;
+    const herDate = $("#her-date");
+    if (herDate) herDate.textContent = `${fmtDate()} ${fmtTime()}`;
     showWeather(data.weather, data.mood);
     startRain(!!(data.weather && data.weather.includes("雨")));
 
@@ -1616,7 +1665,6 @@ async function sendLetter(opts = {}) {
     };
 
     if (oldItemToArchive) {
-      // 1. 将被覆盖的旧信件移入后悔处
       AppCore.postMemory("delete", {
         id: oldItemToArchive.id,
         text: oldItemToArchive.text,
@@ -1626,12 +1674,17 @@ async function sendLetter(opts = {}) {
         mood: oldItemToArchive.mood,
         engine: oldItemToArchive.engine,
       });
+      try {
+        fetch("/api/memory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "soft_delete", id: oldItemToArchive.id }),
+        }).catch(() => {});
+      } catch (_) {}
 
-      // 2. 覆盖替换历史存档中的最后一封
       const lastIdx = state.history.length - 1;
       state.history[lastIdx] = newItem;
     } else {
-      // 正常寄新信
       state.history.push(newItem);
       if (state.history.length > 60) state.history = state.history.slice(-60);
       bumpSent();
@@ -1659,7 +1712,7 @@ async function sendLetter(opts = {}) {
 
 async function regenerateWithModel() {
   if (state.sending) return;
-  const text = draft.value.trim();
+  const text = draft ? draft.value.trim() : "";
   if (!text) { toast("先写点什么，再让模型重写。"); return; }
   const ok = await sendLetter({ force: "model", replaceLast: true });
   if (ok) toast("已用模型重写这一封（原信已移入后悔处备查）");
@@ -1671,8 +1724,11 @@ const historyDrawer = $("#history-drawer");
 
 function renderHistory() {
   const list = $("#history-list");
+  if (!list) return;
   list.innerHTML = "";
-  $("#history-empty").style.display = state.history.length ? "none" : "block";
+  const empty = $("#history-empty");
+  if (empty) empty.style.display = state.history.length ? "none" : "block";
+
   [...state.history].reverse().forEach((item) => {
     const li = document.createElement("li");
     const d = new Date(item.ts);
@@ -1707,6 +1763,13 @@ function renderHistory() {
         mood: item.mood,
         engine: item.engine
       });
+      try {
+        fetch("/api/memory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "soft_delete", id: targetId }),
+        }).catch(() => {});
+      } catch (_) {}
       updateMemoryStatsDisplay();
       toast("信件已标记为 DELETED（可在后悔处恢复）");
     }, 3000);
@@ -1716,13 +1779,16 @@ function renderHistory() {
 }
 
 function restoreHistoryItem(item) {
-  draft.value = item.text;
-  onDraftInput();
-  $("#her-date").textContent = fmtDate(new Date(item.ts));
+  if (draft) {
+    draft.value = item.text;
+    onDraftInput();
+  }
+  const herDate = $("#her-date");
+  if (herDate) herDate.textContent = fmtDate(new Date(item.ts));
   showWeather(item.weather, item.mood);
   startRain(!!(item.weather && item.weather.includes("雨")));
   renderStatic(herBody, item.reply);
-  historyDrawer.classList.remove("open");
+  if (historyDrawer) historyDrawer.classList.remove("open");
   toast("已翻出这封信");
 }
 
@@ -1734,32 +1800,30 @@ const pwdError = $("#pwd-error");
 function openRegretCenter() {
   if (state.adminPassword) {
     loadRegretList();
-    regretDrawer.classList.add("open");
+    if (regretDrawer) regretDrawer.classList.add("open");
   } else {
-    adminPwdInput.value = "123456";
-    pwdError.hidden = true;
-    pwdDialog.hidden = false;
-    adminPwdInput.focus();
+    if (adminPwdInput) adminPwdInput.value = "123456";
+    if (pwdError) pwdError.hidden = true;
+    if (pwdDialog) pwdDialog.hidden = false;
+    if (adminPwdInput) adminPwdInput.focus();
   }
 }
 
 async function verifyAndEnterRegret() {
-  const pwd = adminPwdInput.value.trim();
+  const pwd = adminPwdInput ? adminPwdInput.value.trim() : "";
   if (!pwd) {
-    pwdError.textContent = "请输入密码";
-    pwdError.hidden = false;
+    if (pwdError) { pwdError.textContent = "请输入密码"; pwdError.hidden = false; }
     return;
   }
   const res = AppCore.postMemory("regret", { password: pwd });
   if (res.ok) {
     state.adminPassword = pwd;
-    pwdDialog.hidden = true;
-    pwdError.hidden = true;
+    if (pwdDialog) pwdDialog.hidden = true;
+    if (pwdError) pwdError.hidden = true;
     loadRegretList();
-    regretDrawer.classList.add("open");
+    if (regretDrawer) regretDrawer.classList.add("open");
   } else {
-    pwdError.textContent = res.error || "密码错误，请重试";
-    pwdError.hidden = false;
+    if (pwdError) { pwdError.textContent = res.error || "密码错误，请重试"; pwdError.hidden = false; }
   }
 }
 
@@ -1793,17 +1857,20 @@ function updateRegretFilterTabsUI() {
 function renderRegretListUI() {
   const list = $("#regret-list");
   const empty = $("#regret-empty");
+  if (!list) return;
   list.innerHTML = "";
 
   updateRegretFilterTabsUI();
   const visibleItems = getFilteredDeletedItems();
 
-  empty.style.display = visibleItems.length ? "none" : "block";
-  if (visibleItems.length === 0) {
-    if (state.deletedItems.length > 0) {
-      empty.textContent = "该分类下暂无已删信件。";
-    } else {
-      empty.textContent = "后悔处空空如也，没有被删的记忆或信件。";
+  if (empty) {
+    empty.style.display = visibleItems.length ? "none" : "block";
+    if (visibleItems.length === 0) {
+      if (state.deletedItems.length > 0) {
+        empty.textContent = "该分类下暂无已删信件。";
+      } else {
+        empty.textContent = "后悔处空空如也，没有被删的记忆或信件。";
+      }
     }
   }
 
@@ -1847,12 +1914,31 @@ function renderRegretListUI() {
 
 async function loadRegretList() {
   state.selectedDeletedIds.clear();
-  const res = AppCore.postMemory("regret", { password: state.adminPassword });
-  if (!res.ok) {
-    toast(res.error || "加载后悔处失败");
-    return;
+  let items = null;
+
+  // 尝试从服务端同步（EXE 模式）
+  try {
+    const r = await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list_deleted", password: state.adminPassword }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && data.ok) items = data.deleted;
+    }
+  } catch (_) {}
+
+  if (!items) {
+    const res = AppCore.postMemory("regret", { password: state.adminPassword });
+    if (!res.ok) {
+      toast(res.error || "加载后悔处失败");
+      return;
+    }
+    items = res.deleted || [];
   }
-  state.deletedItems = res.deleted || [];
+
+  state.deletedItems = items || [];
   renderRegretListUI();
 }
 
@@ -1881,10 +1967,24 @@ function updateRegretSelectionUI() {
 }
 
 async function restoreDeletedItems(ids) {
+  const targetIds = ids === "all" ? "all" : Array.from(ids);
   const res = AppCore.postMemory("restore", {
     password: state.adminPassword,
-    ids: ids === "all" ? "all" : Array.from(ids),
+    ids: targetIds,
   });
+
+  try {
+    await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "restore",
+        password: state.adminPassword,
+        ids: targetIds,
+      }),
+    });
+  } catch (_) {}
+
   if (res.ok) {
     const restoredItems = res.items || [];
     const existingIds = new Set(state.history.map((x) => x.id));
@@ -1917,77 +2017,165 @@ async function restoreDeletedItems(ids) {
 
 const settingsDrawer = $("#settings-drawer");
 
-function loadSettingsUI() {
+async function updateMemoryStatsDisplay() {
   try {
-    const cfg = AppCore.getConfig();
-    $("#cfg-protocol").value = cfg.model?.protocol || "auto";
-    $("#cfg-endpoint").value = cfg.model?.endpoint || "";
-    $("#cfg-key").value = cfg.model?.api_key || "";
-    $("#cfg-model").value = cfg.model?.model || "";
-    $("#cfg-timeout").value = cfg.model?.timeout || 15;
-    $("#cfg-min-read").value = cfg.reply?.min_reading_ms || 3200;
-    $("#cfg-max-day").value = cfg.reply?.max_letters_per_day || 3;
-    $("#cfg-admin-pwd").value = cfg.memory?.admin_password || "";
+    let memPath = "浏览器 LocalStorage (纯静态运行)";
+    let activeCount = 0;
+    let deletedCount = 0;
 
-    const stat = AppCore.getStatus();
-    const tag = $("#cfg-mode-tag");
-    if (tag) {
-      tag.textContent = stat.mode === "model" ? "大模型直连" : "纯前端 / Toy 模式";
+    // 优先尝试与服务端 API 通信（Desktop EXE 模式）
+    try {
+      const r = await fetch("/api/memory");
+      if (r.ok) {
+        const mem = await r.json();
+        if (mem && mem.ok) {
+          memPath = mem.path || "data/memory.json";
+          activeCount = mem.active_count ?? mem.total_letters ?? 0;
+          deletedCount = mem.deleted_count ?? 0;
+        }
+      }
+    } catch (_) {}
+
+    // 若服务端不可用，使用 AppCore
+    if (memPath === "浏览器 LocalStorage (纯静态运行)") {
+      const localMem = AppCore.getMemory();
+      if (localMem) {
+        activeCount = localMem.active_count ?? localMem.total_letters ?? 0;
+        deletedCount = localMem.deleted_count ?? 0;
+      }
     }
 
-    updateMemoryStatsDisplay();
-  } catch (e) {
-    console.warn("加载设置失败:", e);
-  }
-}
+    const memPathEl = $("#cfg-memory-path");
+    if (memPathEl) {
+      memPathEl.textContent = memPath;
+      memPathEl.title = memPath;
+    }
 
-function updateMemoryStatsDisplay() {
-  try {
-    const mem = AppCore.getMemory();
-    const memPathEl = $("#cfg-mem-path");
-    const memStatEl = $("#cfg-mem-stat");
-    if (memPathEl) memPathEl.textContent = "浏览器 LocalStorage (纯静态运行)";
+    const memStatEl = $("#cfg-memory-stats");
     if (memStatEl) {
-      memStatEl.textContent = `有效 ${mem.active_count || mem.total_letters || 0} 封 · 已删 ${mem.deleted_count || 0} 封`;
+      memStatEl.textContent = `有效 ${activeCount} 封 · 已删 ${deletedCount} 封`;
     }
   } catch (e) {
     console.warn("更新记忆面板失败:", e);
   }
 }
 
-function saveSettingsUI() {
+async function loadSettingsUI() {
+  try {
+    let cfg = null;
+    let configFile = "浏览器 LocalStorage (纯静态运行)";
+    let isFrozen = false;
+    let isServer = false;
+
+    // 优先尝试从服务端读取（Desktop EXE 模式）
+    try {
+      const r = await fetch("/api/config");
+      if (r.ok) {
+        const data = await r.json();
+        if (data && data.ok) {
+          cfg = data.config;
+          configFile = data.config_file || "config.json";
+          isFrozen = data.frozen;
+          isServer = true;
+        }
+      }
+    } catch (_) {}
+
+    if (!cfg) {
+      cfg = AppCore.getConfig();
+    }
+
+    const protoEl = $("#cfg-protocol");
+    if (protoEl) protoEl.value = cfg.model?.protocol || "auto";
+
+    const epEl = $("#cfg-endpoint");
+    if (epEl) epEl.value = cfg.model?.endpoint || "";
+
+    const keyEl = $("#cfg-apikey");
+    if (keyEl) keyEl.value = cfg.model?.api_key || "";
+
+    const modelEl = $("#cfg-model");
+    if (modelEl) modelEl.value = cfg.model?.model || "";
+
+    const timeoutEl = $("#cfg-timeout");
+    if (timeoutEl) timeoutEl.value = cfg.model?.timeout || 15;
+
+    const readMsEl = $("#cfg-reading-ms");
+    if (readMsEl) readMsEl.value = cfg.reply?.min_reading_ms || 3200;
+
+    const maxDayEl = $("#cfg-daily-limit");
+    if (maxDayEl) maxDayEl.value = cfg.reply?.max_letters_per_day || 3;
+
+    const filePathEl = $("#cfg-file-path");
+    if (filePathEl) {
+      filePathEl.textContent = configFile;
+      filePathEl.title = configFile;
+    }
+
+    const tag = $("#cfg-mode-tag");
+    if (tag) {
+      if (isServer) {
+        tag.textContent = isFrozen ? "EXE 便携模式" : "源码服务模式";
+      } else {
+        const stat = AppCore.getStatus();
+        tag.textContent = stat.model_up ? "大模型直连" : "纯前端 / Toy 模式";
+      }
+    }
+
+    await updateMemoryStatsDisplay();
+  } catch (e) {
+    console.warn("加载设置失败:", e);
+  }
+}
+
+async function saveSettingsUI() {
   const payload = {
     model: {
-      protocol: $("#cfg-protocol").value,
-      endpoint: $("#cfg-endpoint").value.trim(),
-      api_key: $("#cfg-key").value.trim(),
-      model: $("#cfg-model").value.trim(),
-      timeout: Math.max(1, Math.min(120, parseInt($("#cfg-timeout").value, 10) || 15)),
+      protocol: ($("#cfg-protocol")?.value || "auto").trim(),
+      endpoint: ($("#cfg-endpoint")?.value || "").trim(),
+      api_key: ($("#cfg-apikey")?.value || "").trim(),
+      model: ($("#cfg-model")?.value || "").trim(),
+      timeout: Math.max(1, Math.min(120, parseInt($("#cfg-timeout")?.value, 10) || 15)),
     },
     reply: {
-      min_reading_ms: Math.max(0, parseInt($("#cfg-min-read").value, 10) || 3200),
-      max_letters_per_day: Math.max(1, parseInt($("#cfg-max-day").value, 10) || 3),
+      min_reading_ms: Math.max(0, parseInt($("#cfg-reading-ms")?.value, 10) || 3200),
+      max_letters_per_day: Math.max(1, parseInt($("#cfg-daily-limit")?.value, 10) || 3),
     },
     memory: {
       path: "LocalStorage",
-      admin_password: $("#cfg-admin-pwd").value.trim(),
+      admin_password: "123456",
     },
   };
 
   AppCore.saveConfig(payload);
-  toast("设置已保存并立即生效！");
+
+  try {
+    await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) {}
+
+  toast("设置已保存并生效！");
   refreshStatus();
   loadSettingsUI();
+  if (settingsDrawer) settingsDrawer.classList.remove("open");
 }
 
-function resetSettingsUI() {
+async function resetSettingsUI() {
+  if (!confirm("确定要将所有设置恢复为默认值吗？")) return;
   AppCore.resetConfig();
-  toast("已恢复默认设置（纯前端离线人格模式）");
+  try {
+    await fetch("/api/config/reset", { method: "POST" });
+  } catch (_) {}
+  toast("已恢复默认设置");
   refreshStatus();
   loadSettingsUI();
 }
 
 function bindLongPress(btn, callback, holdMs = 3000) {
+  if (!btn) return;
   let timer = null;
   let start = 0;
   let raf = null;
@@ -2032,101 +2220,135 @@ function init() {
   setTheme(localStorage.getItem(LS.theme) || "day");
 
   const soundBtn = $("#sound-toggle");
-  soundBtn.classList.toggle("on", state.sound);
+  if (soundBtn) soundBtn.classList.toggle("on", state.sound);
 
   const limit = $("#limit-toggle");
-  limit.checked = state.unlimited;
+  if (limit) limit.checked = state.unlimited;
 
   const savedDraft = localStorage.getItem(LS.draft);
-  if (savedDraft) {
+  if (savedDraft && draft) {
     draft.value = savedDraft;
     onDraftInput();
   }
 
-  $("#my-date").textContent = fmtDate();
-  $("#my-time").textContent = fmtTime();
+  const myDate = $("#my-date");
+  if (myDate) myDate.textContent = fmtDate();
+  const myTime = $("#my-time");
+  if (myTime) myTime.textContent = fmtTime();
 
   refreshStatus();
   refreshCounter();
   renderHistory();
+  loadSettingsUI();
+  updateMemoryStatsDisplay();
 
   if (state.history.length > 0) {
     const last = state.history[state.history.length - 1];
-    $("#her-date").textContent = fmtDate(new Date(last.ts));
+    const herDate = $("#her-date");
+    if (herDate) herDate.textContent = fmtDate(new Date(last.ts));
     showWeather(last.weather, last.mood);
     startRain(!!(last.weather && last.weather.includes("雨")));
     renderStatic(herBody, last.reply);
   } else {
-    $("#her-date").textContent = "林离的信";
+    const herDate = $("#her-date");
+    if (herDate) herDate.textContent = "林离的信";
     renderStatic(herBody, FIRST_LETTER);
   }
 
-  draft.addEventListener("input", onDraftInput);
-  draft.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      e.preventDefault();
-      sendLetter();
-    }
-  });
+  if (draft) {
+    draft.addEventListener("input", onDraftInput);
+    draft.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        sendLetter();
+      }
+    });
+  }
 
-  sendBtn.addEventListener("click", () => sendLetter());
+  if (sendBtn) sendBtn.addEventListener("click", () => sendLetter());
   $("#regen-btn")?.addEventListener("click", regenerateWithModel);
-  $("#theme-toggle").addEventListener("click", toggleTheme);
+  $("#theme-toggle")?.addEventListener("click", toggleTheme);
 
-  soundBtn.addEventListener("click", () => {
-    state.sound = !state.sound;
-    soundBtn.classList.toggle("on", state.sound);
-    localStorage.setItem(LS.sound, state.sound ? "1" : "0");
-    if (state.sound) { audio.ensure(); audio.chord(); }
-  });
+  if (soundBtn) {
+    soundBtn.addEventListener("click", () => {
+      state.sound = !state.sound;
+      soundBtn.classList.toggle("on", state.sound);
+      localStorage.setItem(LS.sound, state.sound ? "1" : "0");
+      if (state.sound) { audio.ensure(); audio.chord(); }
+    });
+  }
 
-  limit.addEventListener("change", () => {
-    state.unlimited = limit.checked;
-    localStorage.setItem(LS.limit, state.unlimited ? "1" : "0");
-    refreshCounter();
-  });
+  if (limit) {
+    limit.addEventListener("change", () => {
+      state.unlimited = limit.checked;
+      localStorage.setItem(LS.limit, state.unlimited ? "1" : "0");
+      refreshCounter();
+    });
+  }
 
-  $("#history-toggle").addEventListener("click", () => historyDrawer.classList.toggle("open"));
-  $("#history-close").addEventListener("click", () => historyDrawer.classList.remove("open"));
+  $("#history-toggle")?.addEventListener("click", () => historyDrawer?.classList.toggle("open"));
+  $("#history-close")?.addEventListener("click", () => historyDrawer?.classList.remove("open"));
 
-  bindLongPress($("#history-clear"), () => {
-    const oldHistory = [...state.history];
-    state.history = [];
-    localStorage.removeItem(LS.history);
-    renderHistory();
-    AppCore.postMemory("clear", { items: oldHistory });
-    updateMemoryStatsDisplay();
-    toast("全部信件已标记为 DELETED（可在后悔处恢复）");
-  }, 3000);
+  const histClear = $("#history-clear");
+  if (histClear) {
+    bindLongPress(histClear, () => {
+      const oldHistory = [...state.history];
+      state.history = [];
+      localStorage.removeItem(LS.history);
+      renderHistory();
+      AppCore.postMemory("clear", { items: oldHistory });
+      try {
+        fetch("/api/memory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "soft_delete_all" }),
+        }).catch(() => {});
+      } catch (_) {}
+      updateMemoryStatsDisplay();
+      toast("全部信件已标记为 DELETED（可在后悔处恢复）");
+    }, 3000);
+  }
 
-  $("#settings-toggle").addEventListener("click", () => {
+  $("#settings-toggle")?.addEventListener("click", () => {
     loadSettingsUI();
-    settingsDrawer.classList.toggle("open");
+    settingsDrawer?.classList.toggle("open");
   });
-  $("#settings-close").addEventListener("click", () => settingsDrawer.classList.remove("open"));
-  $("#cfg-save-btn").addEventListener("click", saveSettingsUI);
-  $("#cfg-reset-btn").addEventListener("click", resetSettingsUI);
+  $("#settings-close")?.addEventListener("click", () => settingsDrawer?.classList.remove("open"));
+  $("#cfg-save-btn")?.addEventListener("click", saveSettingsUI);
+  $("#cfg-reset-btn")?.addEventListener("click", resetSettingsUI);
 
-  bindLongPress($("#cfg-reset-mem-btn"), () => {
-    const oldHistory = [...state.history];
-    state.history = [];
-    localStorage.removeItem(LS.history);
-    renderHistory();
-    AppCore.postMemory("clear", { items: oldHistory });
-    updateMemoryStatsDisplay();
-    toast("记忆库已软清空（标记为 DELETED，对 AI 隐藏，可在后悔处恢复）");
-  }, 3000);
+  const resetMemBtn = $("#cfg-reset-mem-btn");
+  if (resetMemBtn) {
+    bindLongPress(resetMemBtn, () => {
+      const oldHistory = [...state.history];
+      state.history = [];
+      localStorage.removeItem(LS.history);
+      renderHistory();
+      AppCore.postMemory("clear", { items: oldHistory });
+      try {
+        fetch("/api/memory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "soft_delete_all" }),
+        }).catch(() => {});
+      } catch (_) {}
+      updateMemoryStatsDisplay();
+      toast("记忆库已软清空（标记为 DELETED，对 AI 隐藏，可在后悔处恢复）");
+    }, 3000);
+  }
 
-  $("#history-regret-btn").addEventListener("click", openRegretCenter);
-  $("#cfg-regret-btn").addEventListener("click", openRegretCenter);
-  $("#regret-close").addEventListener("click", () => regretDrawer.classList.remove("open"));
+  $("#history-regret-btn")?.addEventListener("click", openRegretCenter);
+  $("#cfg-regret-btn")?.addEventListener("click", openRegretCenter);
+  $("#regret-close")?.addEventListener("click", () => regretDrawer?.classList.remove("open"));
 
-  $("#pwd-close").addEventListener("click", () => { pwdDialog.hidden = true; });
-  $("#pwd-cancel-btn").addEventListener("click", () => { pwdDialog.hidden = true; });
-  $("#pwd-confirm-btn").addEventListener("click", verifyAndEnterRegret);
-  adminPwdInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); verifyAndEnterRegret(); }
-  });
+  $("#pwd-close")?.addEventListener("click", () => { if (pwdDialog) pwdDialog.hidden = true; });
+  $("#pwd-cancel-btn")?.addEventListener("click", () => { if (pwdDialog) pwdDialog.hidden = true; });
+  $("#pwd-confirm-btn")?.addEventListener("click", verifyAndEnterRegret);
+  if (adminPwdInput) {
+    adminPwdInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); verifyAndEnterRegret(); }
+    });
+  }
 
   $$(".filter-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -2136,7 +2358,7 @@ function init() {
     });
   });
 
-  $("#regret-check-all").addEventListener("change", (e) => {
+  $("#regret-check-all")?.addEventListener("change", (e) => {
     const on = e.target.checked;
     const visibleItems = getFilteredDeletedItems();
     visibleItems.forEach((x) => {
@@ -2147,7 +2369,7 @@ function init() {
     renderRegretListUI();
   });
 
-  $("#regret-restore-selected").addEventListener("click", () => {
+  $("#regret-restore-selected")?.addEventListener("click", () => {
     if (state.selectedDeletedIds.size === 0) return;
     restoreDeletedItems(state.selectedDeletedIds);
   });
@@ -2159,43 +2381,49 @@ function init() {
     restoreDeletedItems(ids);
   });
 
-  $("#regret-restore-all").addEventListener("click", () => {
+  $("#regret-restore-all")?.addEventListener("click", () => {
     if (state.deletedItems.length === 0) { toast("后悔处暂无被删内容"); return; }
     restoreDeletedItems("all");
   });
 
-  $("#print-btn").addEventListener("click", () => window.print());
-  $("#inspire-btn").addEventListener("click", () => {
+  $("#print-btn")?.addEventListener("click", () => window.print());
+  $("#inspire-btn")?.addEventListener("click", () => {
     const line = INSPIRE[state.inspireIdx % INSPIRE.length];
     state.inspireIdx++;
-    if (!draft.value.trim()) draft.value = line;
-    else draft.value += "\n\n" + line;
-    draft.focus();
-    onDraftInput();
+    if (draft) {
+      if (!draft.value.trim()) draft.value = line;
+      else draft.value += "\n\n" + line;
+      draft.focus();
+      onDraftInput();
+    }
   });
 
   document.addEventListener("click", (e) => {
-    if (historyDrawer.classList.contains("open")) {
-      if (!historyDrawer.contains(e.target) && e.target !== $("#history-toggle") && !$("#history-toggle").contains(e.target)) {
+    if (historyDrawer?.classList.contains("open")) {
+      if (!historyDrawer.contains(e.target) && e.target !== $("#history-toggle") && !$("#history-toggle")?.contains(e.target)) {
         historyDrawer.classList.remove("open");
       }
     }
-    if (settingsDrawer.classList.contains("open")) {
-      if (!settingsDrawer.contains(e.target) && e.target !== $("#settings-toggle") && !$("#settings-toggle").contains(e.target)) {
+    if (settingsDrawer?.classList.contains("open")) {
+      if (!settingsDrawer.contains(e.target) && e.target !== $("#settings-toggle") && !$("#settings-toggle")?.contains(e.target)) {
         settingsDrawer.classList.remove("open");
       }
     }
-    if (regretDrawer.classList.contains("open")) {
-      if (
-        !regretDrawer.contains(e.target) &&
-        e.target !== $("#history-regret-btn") &&
-        e.target !== $("#cfg-regret-btn") &&
-        !pwdDialog.contains(e.target)
-      ) {
+    if (regretDrawer?.classList.contains("open")) {
+      if (!regretDrawer.contains(e.target) &&
+          e.target !== $("#history-regret-btn") &&
+          e.target !== $("#cfg-regret-btn") &&
+          pwdDialog && !pwdDialog.contains(e.target)) {
         regretDrawer.classList.remove("open");
       }
     }
   });
 }
 
-init();
+if (typeof window !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+}
