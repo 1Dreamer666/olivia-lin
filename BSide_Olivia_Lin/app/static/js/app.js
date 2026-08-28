@@ -1545,9 +1545,18 @@ async function sendLetter(opts = {}) {
     return;
   }
 
-  if (!state.unlimited && sentToday() >= meta.dailyLimit) {
+  if (!replaceLast && !state.unlimited && sentToday() >= meta.dailyLimit) {
     toast(`今天已经寄了 ${meta.dailyLimit} 封信了。剩下的，明天再说吧。`);
     return;
+  }
+
+  // 若为重写替换，记录被覆盖的旧信件
+  let oldItemToArchive = null;
+  if (replaceLast && state.history.length > 0) {
+    const last = state.history[state.history.length - 1];
+    if (last.text === text) {
+      oldItemToArchive = { ...last };
+    }
   }
 
   setSending(true);
@@ -1595,33 +1604,38 @@ async function sendLetter(opts = {}) {
     showWeather(data.weather, data.mood);
     startRain(!!(data.weather && data.weather.includes("雨")));
 
-    let replaced = false;
-    if (replaceLast && state.history.length) {
-      const last = state.history[state.history.length - 1];
-      if (last.text === text) {
-        last.ts = new Date().toISOString();
-        last.reply = data.reply;
-        last.weather = data.weather;
-        last.mood = data.mood;
-        last.engine = data.engine;
-        replaced = true;
-      }
-    }
-    if (!replaced) {
-      // 保持与 AppCore/MemoryBank 绝对一致的 ID
-      const item = {
-        id: data.id || data.episode?.id || ("ep_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6)),
-        ts: new Date().toISOString(),
-        text,
-        reply: data.reply,
-        weather: data.weather,
-        mood: data.mood,
-        engine: data.engine,
-      };
-      state.history.push(item);
+    const newItem = {
+      id: data.id || data.episode?.id || ("ep_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6)),
+      ts: new Date().toISOString(),
+      text,
+      reply: data.reply,
+      weather: data.weather,
+      mood: data.mood,
+      engine: data.engine,
+    };
+
+    if (oldItemToArchive) {
+      // 1. 将被覆盖的旧信件移入后悔处
+      AppCore.postMemory("delete", {
+        id: oldItemToArchive.id,
+        text: oldItemToArchive.text,
+        reply: oldItemToArchive.reply,
+        ts: oldItemToArchive.ts,
+        weather: oldItemToArchive.weather,
+        mood: oldItemToArchive.mood,
+        engine: oldItemToArchive.engine,
+      });
+
+      // 2. 覆盖替换历史存档中的最后一封
+      const lastIdx = state.history.length - 1;
+      state.history[lastIdx] = newItem;
+    } else {
+      // 正常寄新信
+      state.history.push(newItem);
       if (state.history.length > 60) state.history = state.history.slice(-60);
       bumpSent();
     }
+
     localStorage.setItem(LS.history, JSON.stringify(state.history));
     refreshCounter();
     renderHistory();
@@ -1647,7 +1661,7 @@ async function regenerateWithModel() {
   const text = draft.value.trim();
   if (!text) { toast("先写点什么，再让模型重写。"); return; }
   const ok = await sendLetter({ force: "model", replaceLast: true });
-  if (ok) toast("已用模型重写这一封（覆盖了上一封的回复）");
+  if (ok) toast("已用模型重写这一封（原信已移入后悔处备查）");
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
