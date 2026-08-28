@@ -1,11 +1,5 @@
 """分级记忆系统（Tiered Memory Bank）——让回信"记得"之前的信。
-
 架构参考生产级 agent 记忆的三层共识（工作记忆 / 情景记忆 / 长期记忆）：
-Letta(MemGPT) 的 core-recall-archival、MemoryOS 的短期/中期/长期三级、
-H-MEM 的分层索引与逐级摘要、MemoryOS 的频率/时近性"晋升"与艾宾浩斯式衰减。
-
-本实现：文件式（data/memory.json，零依赖、人类可读可编辑）、规则驱动：
-
 - L1 工作记忆：当前来信 + 本轮回复（在上下文里，不落盘）。
 - L2 情景记忆（episodic）：滚动 episode 日志，最多保留 MAX_EPISODES 条活情景。
 - L3 长期记忆（semantic profile）：从有效 episodes 聚合出的画像——首信日期、
@@ -13,12 +7,6 @@ H-MEM 的分层索引与逐级摘要、MemoryOS 的频率/时近性"晋升"与�
 - 软删除保护（Soft-Delete Guard）：清空与删除记忆是重大决策。系统绝不真正物理
   抹除文件记录，而是标记为 status: "DELETED"（对 AI 与普通前端隐藏）。
   可在密码保护（默认 123456）的"后悔处"随时单选、多选、全选批量回归。
-
-用法：
-    from skill import memory_bank
-    memory_bank.record_exchange(user_text, reply, weather, mood, engine)  # 每封信后
-    ctx = memory_bank.render_context()   # 注入 system prompt（模型路径）
-    echo = memory_bank.memory_echo()     # 本地引擎用的一句"回声"
 """
 from __future__ import annotations
 
@@ -36,8 +24,6 @@ RECENT_IN_PROMPT = 5       # 注入 prompt 的最近情景数
 TOPICS_IN_PROMPT = 3       # 长期画像展示的主题数
 DEFAULT_ADMIN_PASSWORD = "123456"
 
-
-# ---------------------------------------------------------------- 存储
 
 def resolve_memory_path() -> Path:
     env = os.environ.get("OLIVIA_MEMORY")
@@ -80,12 +66,11 @@ def _load() -> dict:
                 data.setdefault("total_letters", 0)
                 data.setdefault("first_letter", None)
                 data.setdefault("notables", {})
-                # 规范化条目
                 for i, ep in enumerate(data["episodes"]):
                     _normalize_episode(ep, i)
                 return data
     except (OSError, json.JSONDecodeError):
-        pass  # 损坏的记忆按全新处理（不阻断写信）
+        pass
     return _empty()
 
 
@@ -97,10 +82,8 @@ def _save(data: dict) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, p)
     except OSError:
-        pass  # 记忆写盘失败不阻断写信
+        pass
 
-
-# ---------------------------------------------------------------- 筛选
 
 def _active_episodes(data: dict) -> list[dict]:
     return [
@@ -116,15 +99,13 @@ def _deleted_episodes(data: dict) -> list[dict]:
     ]
 
 
-# ---------------------------------------------------------------- 写入（L2 → L3 晋升）
-
 def record_exchange(user_text: str, reply: str, weather: str, mood: str,
-                    engine: str, now: datetime | None = None) -> dict | None:
-    """一封信收信+回信完成后调用。返回新增的 episode（无权限等失败时返回 None）。"""
+                    engine: str, now: datetime | None = None, explicit_id: str | None = None) -> dict | None:
+    """一封信收信+回信完成后调用。返回新增的 episode。"""
     now = now or datetime.now()
     a = _le.analyze(user_text)
     data = _load()
-    ep_id = f"ep_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    ep_id = explicit_id or f"ep_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     ep = {
         "id": ep_id,
         "ts": now.isoformat(timespec="seconds"),
@@ -135,26 +116,28 @@ def record_exchange(user_text: str, reply: str, weather: str, mood: str,
         "engine": engine,
         "user_digest": (user_text or "").strip().replace("\n", " ")[:40],
         "reply_digest": (reply or "").strip().split("\n\n")[0][:80],
+        "user_text": user_text,
+        "reply_text": reply,
         "farewell": bool(a["farewell"]),
         "status": "ACTIVE",
         "deleted": False,
     }
-    data["episodes"].append(ep)
 
-    # 仅按 active 数量滚动清理过旧的活跃记忆（被删条目保留在底层）
+    # 避免相同 id 重复插入
+    existing_idx = next((i for i, e in enumerate(data["episodes"]) if e.get("id") == ep_id), -1)
+    if existing_idx >= 0:
+        data["episodes"][existing_idx] = ep
+    else:
+        data["episodes"].append(ep)
+
+    if len(data["episodes"]) > 200:
+        data["episodes"] = data["episodes"][-200:]
+
     actives = _active_episodes(data)
-    if len(actives) > MAX_EPISODES:
-        overflow_count = len(actives) - MAX_EPISODES
-        # 将最旧的 overflow_count 条活跃标记剔除或保持在历史
-        # 保持数组整体上限不超过 200 条以防无限膨胀
-        if len(data["episodes"]) > 200:
-            data["episodes"] = data["episodes"][-200:]
-
-    data["total_letters"] = len(_active_episodes(data))
+    data["total_letters"] = len(actives)
     if not data.get("first_letter") and actives:
         data["first_letter"] = actives[0]["ts"]
 
-    # L3 晋升：关键事件落进长期记忆
     notables = data.setdefault("notables", {})
     if a["farewell"] and not notables.get("farewell"):
         notables["farewell"] = ep["date"]
@@ -164,8 +147,6 @@ def record_exchange(user_text: str, reply: str, weather: str, mood: str,
     _save(data)
     return ep
 
-
-# ---------------------------------------------------------------- 软删除与后悔药（恢复）
 
 def get_admin_password() -> str:
     env = os.environ.get("OLIVIA_ADMIN_PASSWORD")
@@ -183,25 +164,61 @@ def verify_admin_password(pwd: str) -> bool:
     return str(pwd or "").strip() == expected
 
 
-def soft_delete_episode(ep_id: str) -> bool:
+def soft_delete_episode(ep_id_or_payload: str | dict) -> bool:
     """软删除单个记忆：标示为 DELETED，不真正物理删除文件。"""
     data = _load()
     changed = False
     now_iso = datetime.now().isoformat(timespec="seconds")
+
+    ep_id = ep_id_or_payload if isinstance(ep_id_or_payload, str) else (ep_id_or_payload.get("id") or "")
+    ep_text = ep_id_or_payload.get("text", "") if isinstance(ep_id_or_payload, dict) else ""
+    ep_ts = ep_id_or_payload.get("ts", "") if isinstance(ep_id_or_payload, dict) else ""
+
     for e in data.get("episodes", []):
-        if e.get("id") == ep_id:
+        match = False
+        if ep_id and e.get("id") == ep_id:
+            match = True
+        elif ep_ts and e.get("ts") == ep_ts:
+            match = True
+        elif ep_text and (e.get("user_text") == ep_text or (e.get("user_digest") and ep_text.startswith(e.get("user_digest")))):
+            match = True
+
+        if match:
             e["status"] = "DELETED"
             e["deleted"] = True
             e["deleted_at"] = now_iso
             changed = True
             break
+
+    # 兜底：如果底层未找到该记录，直接构造一条 DELETED 条目入库，确保后悔处 100% 可见
+    if not changed and isinstance(ep_id_or_payload, dict) and (ep_text or ep_id):
+        fallback_ep = {
+            "id": ep_id or f"ep_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}",
+            "ts": ep_ts or now_iso,
+            "date": (ep_ts or now_iso)[:10],
+            "topics": ["daily"],
+            "weather": ep_id_or_payload.get("weather", "—"),
+            "mood": ep_id_or_payload.get("mood", "平静"),
+            "engine": ep_id_or_payload.get("engine", "local"),
+            "user_digest": ep_text.strip().replace("\n", " ")[:40],
+            "reply_digest": (ep_id_or_payload.get("reply", "") or "").strip().split("\n\n")[0][:80],
+            "user_text": ep_text,
+            "reply_text": ep_id_or_payload.get("reply", ""),
+            "farewell": False,
+            "status": "DELETED",
+            "deleted": True,
+            "deleted_at": now_iso,
+        }
+        data["episodes"].append(fallback_ep)
+        changed = True
+
     if changed:
         data["total_letters"] = len(_active_episodes(data))
         _save(data)
     return changed
 
 
-def soft_delete_all() -> int:
+def soft_delete_all(items: list[dict] | None = None) -> int:
     """软删除全部有效记忆：标示为 DELETED，数据依然留存。返回标记数量。"""
     data = _load()
     count = 0
@@ -212,22 +229,43 @@ def soft_delete_all() -> int:
             e["deleted"] = True
             e["deleted_at"] = now_iso
             count += 1
-    if count > 0:
-        data["total_letters"] = 0
-        _save(data)
+
+    if items and isinstance(items, list):
+        existing_ids = {e.get("id") for e in data.get("episodes", []) if e.get("id")}
+        for it in items:
+            if it and it.get("id") and it.get("id") not in existing_ids:
+                data["episodes"].append({
+                    "id": it.get("id"),
+                    "ts": it.get("ts") or now_iso,
+                    "date": (it.get("ts") or now_iso)[:10],
+                    "topics": ["daily"],
+                    "weather": it.get("weather", "—"),
+                    "mood": it.get("mood", "平静"),
+                    "engine": it.get("engine", "local"),
+                    "user_digest": (it.get("text") or "").strip().replace("\n", " ")[:40],
+                    "reply_digest": (it.get("reply") or "").strip().split("\n\n")[0][:80],
+                    "user_text": it.get("text", ""),
+                    "reply_text": it.get("reply", ""),
+                    "farewell": False,
+                    "status": "DELETED",
+                    "deleted": True,
+                    "deleted_at": now_iso,
+                })
+                count += 1
+
+    data["total_letters"] = 0
+    _save(data)
     return count
 
 
-def restore_episodes(ep_ids: list[str] | str | None = None) -> int:
+def restore_episodes(ep_ids: list[str] | str | None = None) -> list[dict]:
     """在后悔处选择回归：将 DELETED 条目恢复为 ACTIVE。
-
-    ep_ids 为 None 或 "all" 时全选恢复；为列表时批量恢复指定 ID。
-    返回成功恢复的条数。
+    返回成功恢复的条目列表。
     """
     data = _load()
-    restored_count = 0
+    restored_list: list[dict] = []
     is_all = (ep_ids is None or ep_ids == "all" or ep_ids == ["all"])
-    target_set = set(ep_ids) if isinstance(ep_ids, list) else set()
+    target_set = set(ep_ids) if isinstance(ep_ids, list) else set([ep_ids] if isinstance(ep_ids, str) else [])
 
     for e in data.get("episodes", []):
         if e.get("deleted") or e.get("status") == "DELETED":
@@ -235,15 +273,15 @@ def restore_episodes(ep_ids: list[str] | str | None = None) -> int:
                 e["status"] = "ACTIVE"
                 e["deleted"] = False
                 e.pop("deleted_at", None)
-                restored_count += 1
+                restored_list.append(e)
 
-    if restored_count > 0:
+    if restored_list:
         actives = _active_episodes(data)
         data["total_letters"] = len(actives)
         if actives and not data.get("first_letter"):
             data["first_letter"] = actives[0]["ts"]
         _save(data)
-    return restored_count
+    return restored_list
 
 
 def get_deleted_episodes() -> list[dict]:
@@ -251,8 +289,6 @@ def get_deleted_episodes() -> list[dict]:
     data = _load()
     return _deleted_episodes(data)
 
-
-# ---------------------------------------------------------------- 读取（仅对 ACTIVE 有效）
 
 def _long_term(data: dict) -> dict:
     eps = _active_episodes(data)
@@ -270,7 +306,6 @@ def _long_term(data: dict) -> dict:
         except (ValueError, TypeError):
             days_span = 0
 
-    # 长期关键事件基于当前有效记忆动态计算，防止已删除事件仍留在 AI 画像中
     active_notables: dict[str, str] = {}
     for e in eps:
         if e.get("farewell") and not active_notables.get("farewell"):
@@ -303,10 +338,7 @@ def get_summary() -> dict:
     }
 
 
-# ---- 兼容外部调用 ----
-
 def load() -> dict:
-    """返回规范化后的完整记忆数据。"""
     return _load()
 
 
@@ -319,7 +351,6 @@ def long_term(data: dict | None = None) -> dict:
 
 
 def reset() -> None:
-    """清空记忆：软删除全部有效记录，绝不物理删除文件。"""
     soft_delete_all()
 
 
@@ -331,7 +362,6 @@ _TOPIC_ZH = {
 
 
 def render_context() -> str:
-    """生成注入 system prompt 的记忆块（严格过滤 DELETED 条目；无有效记忆时返回空串）。"""
     data = _load()
     eps = _active_episodes(data)
     if not eps:
@@ -348,14 +378,12 @@ def render_context() -> str:
     if lt["notables"].get("love"):
         lines.append(f"- 关键事件：{lt['notables']['love']} 你写过喜欢一个人。")
     lines.append("")
-    lines.append("【近期情景记忆】（只有这些，不得编造其外的记忆）")
+    lines.append("【近期情景记忆】（只有这些，不得编造其外的记忆）：")
     for e in eps[-RECENT_IN_PROMPT:]:
         topics = "、".join(_TOPIC_ZH.get(t, t) for t in e.get("topics", [])[:3]) or "日常"
         lines.append(f"- {e['date']}（{topics}，她的回复：{e.get('mood', '平静')}）：你写了「{e.get('user_digest', '')}」")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------- 本地引擎用的一句"回声"
 
 _ECHO = {
     "music": "你上次写的那支曲子，我后来还想了想。真的，有些曲子要过很久才对上锁。",
@@ -373,10 +401,8 @@ _ECHO_DEFAULT = "信写了几封了。我慢慢习惯了这个节奏——你写
 
 
 def memory_echo(exclude_digest: str | None = None) -> str | None:
-    """基于最近一条有效情景记忆生成一句"回声"（排除 DELETED）。无有效记忆返回 None。"""
     data = _load()
     eps = _active_episodes(data)
-    # 跳过与当前来信完全相同的条目（避免"自己回自己"）
     for e in reversed(eps):
         if exclude_digest and e.get("user_digest") == (exclude_digest or "").strip().replace("\n", " ")[:40]:
             continue
@@ -387,8 +413,3 @@ def memory_echo(exclude_digest: str | None = None) -> str | None:
             return _ECHO_DEFAULT
         return None
     return None
-
-
-if __name__ == "__main__":
-    s = get_summary()
-    print(json.dumps(s, ensure_ascii=False, indent=2))

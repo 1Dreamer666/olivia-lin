@@ -231,7 +231,19 @@ def handle_letter(payload: dict) -> tuple[int, dict]:
     result["ms"] = int((time.time() - t0) * 1000)
 
     # 写记忆：每条都记，model / local / auto 都算
-    _record_memory(text, result)
+    try:
+        ep = memory_bank.record_exchange(
+            user_text=text,
+            reply=result.get("reply", ""),
+            weather=result.get("weather", "晴"),
+            mood=result.get("mood", "平静"),
+            engine=result.get("engine", "local-persona"),
+        )
+        if ep:
+            result["id"] = ep.get("id")
+            result["episode"] = ep
+    except Exception:
+        traceback.print_exc()
     return 200, result
 
 
@@ -373,22 +385,21 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(401, json.dumps({"ok": False, "error": "管理密码错误，无法恢复被删内容"}, ensure_ascii=False),
                                           "application/json; charset=utf-8")
                     ids = payload.get("ids")
-                    restored_n = memory_bank.restore_episodes(ids)
+                    restored_items = memory_bank.restore_episodes(ids)
                     return self._send(200, json.dumps({
                         "ok": True,
-                        "restored": restored_n,
+                        "restored": len(restored_items),
+                        "items": restored_items,
                         "memory": self._memory_payload(),
                     }, ensure_ascii=False), "application/json; charset=utf-8")
 
                 if action == "soft_delete":
-                    ep_id = str(payload.get("id") or "").strip()
-                    if ep_id:
-                        memory_bank.soft_delete_episode(ep_id)
+                    memory_bank.soft_delete_episode(payload)
                     return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
                                       "application/json; charset=utf-8")
 
                 if bool(payload.get("reset")) or action in ("soft_delete_all", "reset"):
-                    memory_bank.soft_delete_all()
+                    memory_bank.soft_delete_all(payload.get("items"))
                     return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
                                       "application/json; charset=utf-8")
 
