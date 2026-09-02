@@ -848,6 +848,60 @@ var AppCoreExports = (() => {
     }
     return "openai";
   }
+  async function readSSEStreamWithInactivityTimeout(response, inactivityTimeoutMs, onChunk) {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Response body stream is not available");
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    while (true) {
+      let timer = null;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Inactivity timeout after ${inactivityTimeoutMs}ms`));
+        }, inactivityTimeoutMs);
+      });
+      try {
+        const result = await Promise.race([reader.read(), timeoutPromise]);
+        clearTimeout(timer);
+        if (result.done) {
+          break;
+        }
+        buffer += decoder.decode(result.value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(":")) continue;
+          if (trimmed.startsWith("data:")) {
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr === "[DONE]") return;
+            try {
+              const parsed = JSON.parse(dataStr);
+              const openaiDelta = parsed?.choices?.[0]?.delta?.content;
+              if (openaiDelta) onChunk(openaiDelta);
+              if (parsed?.type === "content_block_delta" && parsed?.delta?.type === "text_delta") {
+                onChunk(parsed.delta.text || "");
+              }
+              const geminiParts = parsed?.candidates?.[0]?.content?.parts;
+              if (Array.isArray(geminiParts)) {
+                for (const part of geminiParts) {
+                  if (part?.text) onChunk(part.text);
+                }
+              }
+            } catch {
+            }
+          }
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        try {
+          reader.cancel();
+        } catch {
+        }
+        throw err;
+      }
+    }
+  }
   async function callOpenAI(config, system, userText) {
     let base = (config.endpoint || "").trim().replace(/\/+$/, "");
     let url;
@@ -858,68 +912,154 @@ var AppCoreExports = (() => {
     } else {
       url = `${base}/v1/chat/completions`;
     }
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.api_key || "test"}`
-      },
-      body: JSON.stringify({
-        model: config.model || "deepseek-v4-flash",
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: userText }
-        ],
-        temperature: 0.7
-      }),
-      signal: AbortSignal.timeout(config.timeout * 1e3)
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content;
-    return typeof text === "string" ? text.trim() : null;
+    const timeoutMs = (config.timeout || 15) * 1e3;
+    const initialController = new AbortController();
+    const initialTimer = setTimeout(() => initialController.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${config.api_key || "test"}`,
+          "Accept": "text/event-stream, application/json"
+        },
+        body: JSON.stringify({
+          model: config.model || "deepseek-v4-flash",
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userText }
+          ],
+          temperature: 0.7,
+          stream: true
+        }),
+        signal: initialController.signal
+      });
+      clearTimeout(initialTimer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const parts = [];
+      await readSSEStreamWithInactivityTimeout(res, timeoutMs, (chunk) => {
+        parts.push(chunk);
+      });
+      if (parts.length > 0) return parts.join("").trim();
+    } catch (err) {
+      clearTimeout(initialTimer);
+      try {
+        const res2 = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${config.api_key || "test"}`
+          },
+          body: JSON.stringify({
+            model: config.model || "deepseek-v4-flash",
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: userText }
+            ],
+            temperature: 0.7,
+            stream: false
+          }),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+        if (res2.ok) {
+          const data = await res2.json();
+          const text = data?.choices?.[0]?.message?.content;
+          return typeof text === "string" ? text.trim() : null;
+        }
+      } catch {
+      }
+    }
+    return null;
   }
   async function callAnthropic(config, system, userText) {
     let base = (config.endpoint || "").trim().replace(/\/+$/, "");
     let url = base.endsWith("/messages") ? base : base.endsWith("/v1") ? `${base}/messages` : `${base}/v1/messages`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": config.api_key || "test",
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: config.model || "claude-3-5-sonnet-latest",
-        system,
-        messages: [{ role: "user", content: userText }],
-        max_tokens: 2048,
-        temperature: 0.7
-      }),
-      signal: AbortSignal.timeout(config.timeout * 1e3)
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const texts = (data?.content || []).filter((c) => c.type === "text").map((c) => c.text);
-    return texts.length > 0 ? texts.join("").trim() : null;
+    const timeoutMs = (config.timeout || 15) * 1e3;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": config.api_key || "test",
+          "anthropic-version": "2023-06-01",
+          "Accept": "text/event-stream, application/json"
+        },
+        body: JSON.stringify({
+          model: config.model || "claude-3-5-sonnet-latest",
+          system,
+          messages: [{ role: "user", content: userText }],
+          max_tokens: 2048,
+          temperature: 0.7,
+          stream: true
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const parts = [];
+      await readSSEStreamWithInactivityTimeout(res, timeoutMs, (chunk) => {
+        parts.push(chunk);
+      });
+      if (parts.length > 0) return parts.join("").trim();
+    } catch {
+      try {
+        const res2 = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": config.api_key || "test",
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify({
+            model: config.model || "claude-3-5-sonnet-latest",
+            system,
+            messages: [{ role: "user", content: userText }],
+            max_tokens: 2048,
+            temperature: 0.7,
+            stream: false
+          }),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+        if (res2.ok) {
+          const data = await res2.json();
+          const texts = (data?.content || []).filter((c) => c.type === "text").map((c) => c.text);
+          return texts.length > 0 ? texts.join("").trim() : null;
+        }
+      } catch {
+      }
+    }
+    return null;
   }
   async function callGemini(config, system, userText) {
     let base = (config.endpoint || "").trim().replace(/\/+$/, "");
-    let url = base.includes("generateContent") ? base : `${base}/v1beta/models/${config.model}:generateContent?key=${encodeURIComponent(config.api_key || "test")}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts: [{ text: userText }] }],
-        generationConfig: { temperature: 0.7 }
-      }),
-      signal: AbortSignal.timeout(config.timeout * 1e3)
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    return typeof text === "string" ? text.trim() : null;
+    const timeoutMs = (config.timeout || 15) * 1e3;
+    const isSSE = !base.includes("generateContent");
+    let url = isSSE ? `${base}/v1beta/models/${config.model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(config.api_key || "test")}` : `${base}/v1beta/models/${config.model}:generateContent?key=${encodeURIComponent(config.api_key || "test")}`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: userText }] }],
+          generationConfig: { temperature: 0.7 }
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (isSSE) {
+        const parts = [];
+        await readSSEStreamWithInactivityTimeout(res, timeoutMs, (chunk) => {
+          parts.push(chunk);
+        });
+        if (parts.length > 0) return parts.join("").trim();
+      } else {
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        return typeof text === "string" ? text.trim() : null;
+      }
+    } catch {
+    }
+    return null;
   }
   async function askModel(config, system, userText) {
     if (!config.endpoint || !config.endpoint.startsWith("http")) {
@@ -1661,11 +1801,11 @@ async function sendLetter(opts = {}) {
       reply: data.reply,
       weather: data.weather,
       mood: data.mood,
-      engine: data.engine,
+      engine: data.engine === "local-persona" ? "local" : (data.engine || "local"),
     };
 
     if (oldItemToArchive) {
-      AppCore.postMemory("delete", {
+      const delPayload = {
         id: oldItemToArchive.id,
         text: oldItemToArchive.text,
         reply: oldItemToArchive.reply,
@@ -1673,12 +1813,13 @@ async function sendLetter(opts = {}) {
         weather: oldItemToArchive.weather,
         mood: oldItemToArchive.mood,
         engine: oldItemToArchive.engine,
-      });
+      };
+      AppCore.postMemory("delete", delPayload);
       try {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete", id: oldItemToArchive.id }),
+          body: JSON.stringify({ action: "soft_delete", ...delPayload }),
         }).catch(() => {});
       } catch (_) {}
 
@@ -1732,10 +1873,11 @@ function renderHistory() {
   [...state.history].reverse().forEach((item) => {
     const li = document.createElement("li");
     const d = new Date(item.ts);
+    const isModel = item.engine === "model";
     li.innerHTML = `
       <div class="h-meta">
         <span>${d.getMonth() + 1} 月 ${d.getDate()} 日 ${fmtTime(d)} · ${item.weather || "—"}</span>
-        <span>${item.engine === "model" ? "模型" : "本地引擎"}</span>
+        <span>${isModel ? "模型" : "本地引擎"}</span>
       </div>
       <div class="h-txt"></div>
       <div class="h-act">
@@ -1744,30 +1886,30 @@ function renderHistory() {
           <span class="hold-label">删除 (长按3s)</span>
         </button>
       </div>`;
-    li.querySelector(".h-txt").textContent = "我：" + item.text.slice(0, 60);
+    li.querySelector(".h-txt").textContent = "我：" + (item.text || "").slice(0, 60);
     li.addEventListener("click", () => restoreHistoryItem(item));
 
     const delBtn = li.querySelector(".h-del");
     delBtn.addEventListener("click", (e) => e.stopPropagation());
     bindLongPress(delBtn, () => {
-      const targetId = item.id;
-      state.history = state.history.filter((x) => x.id !== targetId);
-      localStorage.setItem(LS.history, JSON.stringify(state.history));
-      renderHistory();
-      AppCore.postMemory("delete", {
-        id: targetId,
+      const delPayload = {
+        id: item.id,
         text: item.text,
         reply: item.reply,
         ts: item.ts,
         weather: item.weather,
         mood: item.mood,
         engine: item.engine
-      });
+      };
+      state.history = state.history.filter((x) => x.id !== item.id);
+      localStorage.setItem(LS.history, JSON.stringify(state.history));
+      renderHistory();
+      AppCore.postMemory("delete", delPayload);
       try {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete", id: targetId }),
+          body: JSON.stringify({ action: "soft_delete", ...delPayload }),
         }).catch(() => {});
       } catch (_) {}
       updateMemoryStatsDisplay();
@@ -1879,6 +2021,9 @@ function renderRegretListUI() {
     li.className = "regret-item";
     const epId = item.id || `ep_${item.ts}`;
     const isModel = item.engine === "model";
+    const userDisplay = item.user_text || item.user_digest || item.text || "（无来信记录）";
+    const replyDisplay = item.reply_text || item.reply_digest || item.reply || "（无回信记录）";
+
     li.innerHTML = `
       <input type="checkbox" data-id="${epId}" class="regret-chk" ${state.selectedDeletedIds.has(epId) ? "checked" : ""}>
       <div class="regret-item-content">
@@ -1889,8 +2034,8 @@ function renderRegretListUI() {
             <span class="regret-tag">DELETED</span>
           </div>
         </div>
-        <div class="regret-user-txt">来信：「${item.user_text || item.user_digest || item.text || "空"}」</div>
-        <div class="regret-reply-txt">回信：${item.reply_text || item.reply_digest || item.reply || "—"}</div>
+        <div class="regret-user-txt">来信：「${userDisplay}」</div>
+        <div class="regret-reply-txt">回信：${replyDisplay}</div>
       </div>
       <button class="ghostbtn sm regret-single-btn" data-id="${epId}">回归</button>
     `;
@@ -1993,11 +2138,11 @@ async function restoreDeletedItems(ids) {
         state.history.push({
           id: ep.id,
           ts: ep.ts || new Date().toISOString(),
-          text: ep.user_text || ep.user_digest || "（已恢复的信件）",
-          reply: ep.reply_text || ep.reply_digest || "……",
+          text: ep.user_text || ep.user_digest || ep.text || "（已恢复的信件）",
+          reply: ep.reply_text || ep.reply_digest || ep.reply || "……",
           weather: ep.weather || "晴",
           mood: ep.mood || "平静",
-          engine: ep.engine || "local",
+          engine: ep.engine === "local-persona" ? "local" : (ep.engine || "local"),
         });
       }
     }
@@ -2005,7 +2150,7 @@ async function restoreDeletedItems(ids) {
     localStorage.setItem(LS.history, JSON.stringify(state.history));
     renderHistory();
 
-    toast(`成功将 ${res.restored} 封记忆回归！`);
+    toast(`成功将 ${res.restored || restoredItems.length} 封记忆回归！`);
     audio.chord();
     loadRegretList();
     refreshStatus();
@@ -2142,7 +2287,7 @@ async function saveSettingsUI() {
       max_letters_per_day: Math.max(1, parseInt($("#cfg-daily-limit")?.value, 10) || 3),
     },
     memory: {
-      path: "LocalStorage",
+      path: "data/memory.json",
       admin_password: "123456",
     },
   };
@@ -2301,7 +2446,7 @@ function init() {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete_all" }),
+          body: JSON.stringify({ action: "soft_delete_all", items: oldHistory }),
         }).catch(() => {});
       } catch (_) {}
       updateMemoryStatsDisplay();
@@ -2329,7 +2474,7 @@ function init() {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete_all" }),
+          body: JSON.stringify({ action: "soft_delete_all", items: oldHistory }),
         }).catch(() => {});
       } catch (_) {}
       updateMemoryStatsDisplay();
