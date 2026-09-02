@@ -1661,11 +1661,11 @@ async function sendLetter(opts = {}) {
       reply: data.reply,
       weather: data.weather,
       mood: data.mood,
-      engine: data.engine,
+      engine: data.engine === "local-persona" ? "local" : (data.engine || "local"),
     };
 
     if (oldItemToArchive) {
-      AppCore.postMemory("delete", {
+      const delPayload = {
         id: oldItemToArchive.id,
         text: oldItemToArchive.text,
         reply: oldItemToArchive.reply,
@@ -1673,12 +1673,13 @@ async function sendLetter(opts = {}) {
         weather: oldItemToArchive.weather,
         mood: oldItemToArchive.mood,
         engine: oldItemToArchive.engine,
-      });
+      };
+      AppCore.postMemory("delete", delPayload);
       try {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete", id: oldItemToArchive.id }),
+          body: JSON.stringify({ action: "soft_delete", ...delPayload }),
         }).catch(() => {});
       } catch (_) {}
 
@@ -1732,10 +1733,11 @@ function renderHistory() {
   [...state.history].reverse().forEach((item) => {
     const li = document.createElement("li");
     const d = new Date(item.ts);
+    const isModel = item.engine === "model";
     li.innerHTML = `
       <div class="h-meta">
         <span>${d.getMonth() + 1} 月 ${d.getDate()} 日 ${fmtTime(d)} · ${item.weather || "—"}</span>
-        <span>${item.engine === "model" ? "模型" : "本地引擎"}</span>
+        <span>${isModel ? "模型" : "本地引擎"}</span>
       </div>
       <div class="h-txt"></div>
       <div class="h-act">
@@ -1744,30 +1746,30 @@ function renderHistory() {
           <span class="hold-label">删除 (长按3s)</span>
         </button>
       </div>`;
-    li.querySelector(".h-txt").textContent = "我：" + item.text.slice(0, 60);
+    li.querySelector(".h-txt").textContent = "我：" + (item.text || "").slice(0, 60);
     li.addEventListener("click", () => restoreHistoryItem(item));
 
     const delBtn = li.querySelector(".h-del");
     delBtn.addEventListener("click", (e) => e.stopPropagation());
     bindLongPress(delBtn, () => {
-      const targetId = item.id;
-      state.history = state.history.filter((x) => x.id !== targetId);
-      localStorage.setItem(LS.history, JSON.stringify(state.history));
-      renderHistory();
-      AppCore.postMemory("delete", {
-        id: targetId,
+      const delPayload = {
+        id: item.id,
         text: item.text,
         reply: item.reply,
         ts: item.ts,
         weather: item.weather,
         mood: item.mood,
         engine: item.engine
-      });
+      };
+      state.history = state.history.filter((x) => x.id !== item.id);
+      localStorage.setItem(LS.history, JSON.stringify(state.history));
+      renderHistory();
+      AppCore.postMemory("delete", delPayload);
       try {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete", id: targetId }),
+          body: JSON.stringify({ action: "soft_delete", ...delPayload }),
         }).catch(() => {});
       } catch (_) {}
       updateMemoryStatsDisplay();
@@ -1879,6 +1881,9 @@ function renderRegretListUI() {
     li.className = "regret-item";
     const epId = item.id || `ep_${item.ts}`;
     const isModel = item.engine === "model";
+    const userDisplay = item.user_text || item.user_digest || item.text || "（无来信记录）";
+    const replyDisplay = item.reply_text || item.reply_digest || item.reply || "（无回信记录）";
+
     li.innerHTML = `
       <input type="checkbox" data-id="${epId}" class="regret-chk" ${state.selectedDeletedIds.has(epId) ? "checked" : ""}>
       <div class="regret-item-content">
@@ -1889,8 +1894,8 @@ function renderRegretListUI() {
             <span class="regret-tag">DELETED</span>
           </div>
         </div>
-        <div class="regret-user-txt">来信：「${item.user_text || item.user_digest || item.text || "空"}」</div>
-        <div class="regret-reply-txt">回信：${item.reply_text || item.reply_digest || item.reply || "—"}</div>
+        <div class="regret-user-txt">来信：「${userDisplay}」</div>
+        <div class="regret-reply-txt">回信：${replyDisplay}</div>
       </div>
       <button class="ghostbtn sm regret-single-btn" data-id="${epId}">回归</button>
     `;
@@ -1993,11 +1998,11 @@ async function restoreDeletedItems(ids) {
         state.history.push({
           id: ep.id,
           ts: ep.ts || new Date().toISOString(),
-          text: ep.user_text || ep.user_digest || "（已恢复的信件）",
-          reply: ep.reply_text || ep.reply_digest || "……",
+          text: ep.user_text || ep.user_digest || ep.text || "（已恢复的信件）",
+          reply: ep.reply_text || ep.reply_digest || ep.reply || "……",
           weather: ep.weather || "晴",
           mood: ep.mood || "平静",
-          engine: ep.engine || "local",
+          engine: ep.engine === "local-persona" ? "local" : (ep.engine || "local"),
         });
       }
     }
@@ -2005,7 +2010,7 @@ async function restoreDeletedItems(ids) {
     localStorage.setItem(LS.history, JSON.stringify(state.history));
     renderHistory();
 
-    toast(`成功将 ${res.restored} 封记忆回归！`);
+    toast(`成功将 ${res.restored || restoredItems.length} 封记忆回归！`);
     audio.chord();
     loadRegretList();
     refreshStatus();
@@ -2142,7 +2147,7 @@ async function saveSettingsUI() {
       max_letters_per_day: Math.max(1, parseInt($("#cfg-daily-limit")?.value, 10) || 3),
     },
     memory: {
-      path: "LocalStorage",
+      path: "data/memory.json",
       admin_password: "123456",
     },
   };
@@ -2301,7 +2306,7 @@ function init() {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete_all" }),
+          body: JSON.stringify({ action: "soft_delete_all", items: oldHistory }),
         }).catch(() => {});
       } catch (_) {}
       updateMemoryStatsDisplay();
@@ -2329,7 +2334,7 @@ function init() {
         fetch("/api/memory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "soft_delete_all" }),
+          body: JSON.stringify({ action: "soft_delete_all", items: oldHistory }),
         }).catch(() => {});
       } catch (_) {}
       updateMemoryStatsDisplay();
