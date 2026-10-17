@@ -1,24 +1,22 @@
-"""多协议兼容模型客户端（OpenAI / Gemini / Anthropic / Auto）。
+"""模型客户端：多协议自动兼容与流式活跃心跳超时 (Sliding Inactivity Timeout)
 
-支持各大主流大模型协议与生态：
-1. OpenAI 兼容协议（最通用：OpenAI 官方、DeepSeek、Qwen、OneAPI/NewAPI、Ollama、LM Studio、vLLM）
-   POST <endpoint>/v1/chat/completions
-2. Google Gemini 协议（官方 API 及本地 Gemini 空壳代理）
-   POST <endpoint>/v1beta/models/<model>:generateContent 或 google-generativeai SDK
-3. Anthropic 协议（Claude 原生格式）
-   POST <endpoint>/v1/messages
-4. Auto 模式：根据端点 URL 与模型名称自动推断对应协议。
+支持四种模式：
+  1. OpenAI 兼容协议（支持流式实时心跳刷新）：POST <endpoint>/v1/chat/completions
+  2. Gemini 协议（REST / SDK）：POST <endpoint>/v1beta/models/<model>:streamGenerateContent
+  3. Anthropic 协议（Claude 格式）：POST <endpoint>/v1/messages
+  4. Auto 模式：根据端点 URL 与模型名称自动推断对应协议。
 
-行为约定：
-- 端点可达且调用成功  → 返回模型生成的文本字符串；
-- 端点不可达 / 鉴权失败 / 超时 / 异常 → 返回 None，自动降级到 local_engine 本地人格引擎；
-- 绝不让请求挂死或报错。
+超时机制升级：
+  - 采用「流式心跳活跃超时」机制（Sliding Inactivity Timeout）。
+  - 在输出过程中，只要收到新的分片或字符，超时计时器即刻重置刷新。
+  - 仅当模型停止吐字且超过设定阈值（未完成）时，才判定超时并触发平滑降级。
 """
 from __future__ import annotations
 
 import json
 import os
 import socket
+import time
 import urllib.parse
 import urllib.request
 from typing import Any
@@ -35,9 +33,9 @@ ENDPOINT = os.environ.get("OLIVIA_ENDPOINT", str(_m.get("endpoint", "http://127.
 MODEL = os.environ.get("OLIVIA_MODEL", str(_m.get("model", "gemini-2.5-flash")))
 TIMEOUT = float(os.environ.get("OLIVIA_TIMEOUT", _m.get("timeout", 15)))
 
+genai = None
 GENAI_LOADED = False
 GENAI_ERROR = ""
-genai = None
 
 try:
     import google.generativeai as _genai
@@ -95,7 +93,6 @@ def reconfigure(cfg: dict | None = None) -> dict:
 
     HOST, PORT = _parse_host_port(ENDPOINT)
 
-    # 尝试配置 SDK（如果为 Gemini）
     if genai and (_detect_protocol(PROTOCOL, ENDPOINT, MODEL) == "gemini"):
         try:
             genai.configure(
@@ -120,11 +117,11 @@ def model_available() -> bool:
         return False
 
 
-# ---------------------------------------------------------------- 协议适配调用实现
+# ---------------------------------------------------------------- 协议适配与流式心跳调用实现
 
 def _call_openai(endpoint: str, api_key: str, model_name: str, system: str,
                  user_text: str, timeout: float) -> str | None:
-    """OpenAI 格式调用 (/v1/chat/completions)。"""
+    """OpenAI 格式流式调用，支持块间活动心跳重置。"""
     base = endpoint.rstrip("/")
     if not base.endswith("/chat/completions"):
         if base.endswith("/v1"):
@@ -138,6 +135,7 @@ def _call_openai(endpoint: str, api_key: str, model_name: str, system: str,
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key or 'test'}",
         "User-Agent": "BSide-Olivia-Client/1.0",
+        "Accept": "text/event-stream, application/json",
     }
     payload = {
         "model": model_name,
@@ -146,20 +144,54 @@ def _call_openai(endpoint: str, api_key: str, model_name: str, system: str,
             {"role": "user", "content": user_text},
         ],
         "temperature": 0.7,
+        "stream": True,
     }
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        choices = data.get("choices") or []
-        if choices:
-            msg = choices[0].get("message") or {}
-            return str(msg.get("content") or "").strip()
+
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_parts = []
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        choices = chunk.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta") or {}
+                            delta_text = delta.get("content") or ""
+                            if delta_text:
+                                content_parts.append(delta_text)
+                    except Exception:
+                        continue
+            
+            if content_parts:
+                return "".join(content_parts).strip()
+    except Exception:
+        # 若服务端不支持 stream=True，降级为普通非流式调用
+        try:
+            payload["stream"] = False
+            req2 = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+            with urllib.request.urlopen(req2, timeout=timeout) as resp2:
+                data = json.loads(resp2.read().decode("utf-8"))
+                choices = data.get("choices") or []
+                if choices:
+                    msg = choices[0].get("message") or {}
+                    return str(msg.get("content") or "").strip()
+        except Exception:
+            pass
+
     return None
 
 
 def _call_anthropic(endpoint: str, api_key: str, model_name: str, system: str,
                     user_text: str, timeout: float) -> str | None:
-    """Anthropic 格式调用 (/v1/messages)。"""
+    """Anthropic 格式调用（支持 SSE 流式心跳）。"""
     base = endpoint.rstrip("/")
     if not base.endswith("/messages"):
         if base.endswith("/v1"):
@@ -174,6 +206,7 @@ def _call_anthropic(endpoint: str, api_key: str, model_name: str, system: str,
         "x-api-key": api_key or "test",
         "anthropic-version": "2023-06-01",
         "User-Agent": "BSide-Olivia-Client/1.0",
+        "Accept": "text/event-stream, application/json",
     }
     payload = {
         "model": model_name,
@@ -183,25 +216,50 @@ def _call_anthropic(endpoint: str, api_key: str, model_name: str, system: str,
         ],
         "max_tokens": 2048,
         "temperature": 0.7,
+        "stream": True,
     }
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        contents = data.get("content") or []
-        texts = [c.get("text", "") for c in contents if c.get("type") == "text"]
-        if texts:
-            return "".join(texts).strip()
+
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_parts = []
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if line.startswith("data:"):
+                    data_str = line[5:].strip()
+                    try:
+                        chunk = json.loads(data_str)
+                        if chunk.get("type") == "content_block_delta":
+                            delta = chunk.get("delta") or {}
+                            if delta.get("type") == "text_delta":
+                                content_parts.append(delta.get("text", ""))
+                    except Exception:
+                        continue
+            if content_parts:
+                return "".join(content_parts).strip()
+    except Exception:
+        try:
+            payload["stream"] = False
+            req2 = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+            with urllib.request.urlopen(req2, timeout=timeout) as resp2:
+                data = json.loads(resp2.read().decode("utf-8"))
+                contents = data.get("content") or []
+                texts = [c.get("text", "") for c in contents if c.get("type") == "text"]
+                if texts:
+                    return "".join(texts).strip()
+        except Exception:
+            pass
+
     return None
 
 
 def _call_gemini(endpoint: str, api_key: str, model_name: str, system: str,
                  user_text: str, timeout: float) -> str | None:
-    """Gemini 格式调用（优先 REST，兼容 SDK）。"""
-    # 1. 尝试直接 REST API 调用
+    """Gemini 格式调用（支持 SSE 流式心跳）。"""
     try:
         base = endpoint.rstrip("/")
-        if "generateContent" not in base:
-            url = f"{base}/v1beta/models/{model_name}:generateContent?key={urllib.parse.quote(api_key or 'test')}"
+        if "streamGenerateContent" not in base and "generateContent" not in base:
+            url = f"{base}/v1beta/models/{model_name}:streamGenerateContent?alt=sse&key={urllib.parse.quote(api_key or 'test')}"
         else:
             url = base
 
@@ -213,6 +271,30 @@ def _call_gemini(endpoint: str, api_key: str, model_name: str, system: str,
         }
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_parts = []
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if line.startswith("data:"):
+                    try:
+                        chunk = json.loads(line[5:].strip())
+                        candidates = chunk.get("candidates") or []
+                        if candidates:
+                            parts = ((candidates[0].get("content") or {}).get("parts") or [])
+                            for p in parts:
+                                content_parts.append(p.get("text", ""))
+                    except Exception:
+                        continue
+            if content_parts:
+                return "".join(content_parts).strip()
+    except Exception:
+        pass
+
+    # 非流式 REST 回退
+    try:
+        base = endpoint.rstrip("/")
+        url = f"{base}/v1beta/models/{model_name}:generateContent?key={urllib.parse.quote(api_key or 'test')}" if "generateContent" not in base else base
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             candidates = data.get("candidates") or []
             if candidates:
@@ -222,7 +304,6 @@ def _call_gemini(endpoint: str, api_key: str, model_name: str, system: str,
     except Exception:
         pass
 
-    # 2. 回退到 google-generativeai SDK（如果存在）
     if genai:
         try:
             m = genai.GenerativeModel(model_name)
@@ -238,7 +319,7 @@ def _call_gemini(endpoint: str, api_key: str, model_name: str, system: str,
 
 
 def ask_model(system: str, user_text: str, timeout: float | None = None) -> str | None:
-    """多协议自动适配调用模型。任何失败或异常均返回 None（由上层平滑降级）。"""
+    """多协议自动适配调用模型（带心跳流式与块间重置）。"""
     active_proto = _detect_protocol(PROTOCOL, ENDPOINT, MODEL)
     t = timeout or TIMEOUT
 
@@ -258,7 +339,7 @@ def ask_model(system: str, user_text: str, timeout: float | None = None) -> str 
 
         # 兜底交叉尝试：如果指定协议失败，尝试 OpenAI 兼容协议
         if active_proto != "openai":
-            res = _call_openai(ENDPOINT, API_KEY, MODEL, system, user_text, min(t, 3.0))
+            res = _call_openai(ENDPOINT, API_KEY, MODEL, system, user_text, min(t, 5.0))
             if res:
                 return res
     except Exception:
@@ -267,7 +348,7 @@ def ask_model(system: str, user_text: str, timeout: float | None = None) -> str 
     return None
 
 
-def status() -> dict:
+def status() -> dict[str, Any]:
     active_proto = _detect_protocol(PROTOCOL, ENDPOINT, MODEL)
     return {
         "protocol": PROTOCOL,
