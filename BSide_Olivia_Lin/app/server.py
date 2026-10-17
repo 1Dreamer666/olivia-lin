@@ -5,7 +5,8 @@
   GET  /                静态页（static/）
   GET  /api/status      模型空壳状态（端点探活 + genai 加载情况）+ 生效配置 + 记忆库摘要
   GET  /api/memory      读取分级记忆（长期画像 + 最近情景）
-  POST /api/memory      {"reset": true} 重置记忆
+  POST /api/memory      {"reset": true} 重置记忆 / {"action": "list_deleted|restore|soft_delete|distill_letters", ...}
+                        其中 distill_letters 用于把一批信件补记进记忆（手动沉淀 / 批量导入，幂等）
   POST /api/letter      {"text":"…", "force":"auto|model|local"} → 回信
 
 行为：
@@ -397,6 +398,18 @@ class Handler(BaseHTTPRequestHandler):
                     memory_bank.soft_delete_episode(payload)
                     return self._send(200, json.dumps(self._memory_payload(), ensure_ascii=False),
                                       "application/json; charset=utf-8")
+
+                if action == "distill_letters":
+                    letters = payload.get("letters")
+                    if not isinstance(letters, list):
+                        return self._send(400, json.dumps({"ok": False, "error": "letters 需为数组"}, ensure_ascii=False),
+                                          "application/json; charset=utf-8")
+                    result = memory_bank.distill_letters(letters[:500], dry_run=bool(payload.get("dry_run")))
+                    return self._send(200, json.dumps({
+                        "ok": True,
+                        **result,
+                        "memory": self._memory_payload(),
+                    }, ensure_ascii=False), "application/json; charset=utf-8")
 
                 if bool(payload.get("reset")) or action in ("soft_delete_all", "reset"):
                     memory_bank.soft_delete_all(payload.get("items"))

@@ -99,12 +99,10 @@ def _deleted_episodes(data: dict) -> list[dict]:
     ]
 
 
-def record_exchange(user_text: str, reply: str, weather: str, mood: str,
-                    engine: str, now: datetime | None = None, explicit_id: str | None = None) -> dict | None:
-    """一封信收信+回信完成后调用。返回新增的 episode。"""
-    now = now or datetime.now()
+def _build_episode(user_text: str, reply: str, weather: str, mood: str, engine: str,
+                   now: datetime, explicit_id: str | None = None) -> tuple[dict, dict]:
+    """构造一条情景记忆（不落盘）。返回 (episode, 来信分析结果)。"""
     a = _le.analyze(user_text)
-    data = _load()
     ep_id = explicit_id or f"ep_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     ep = {
         "id": ep_id,
@@ -122,9 +120,12 @@ def record_exchange(user_text: str, reply: str, weather: str, mood: str,
         "status": "ACTIVE",
         "deleted": False,
     }
+    return ep, a
 
-    # 避免相同 id 重复插入
-    existing_idx = next((i for i, e in enumerate(data["episodes"]) if e.get("id") == ep_id), -1)
+
+def _apply_episode(data: dict, ep: dict, analysis: dict | None = None) -> None:
+    """把一条 episode 并入记忆数据：相同 id 覆盖、超出容量裁剪、重算汇总字段。"""
+    existing_idx = next((i for i, e in enumerate(data["episodes"]) if e.get("id") == ep.get("id")), -1)
     if existing_idx >= 0:
         data["episodes"][existing_idx] = ep
     else:
@@ -138,14 +139,173 @@ def record_exchange(user_text: str, reply: str, weather: str, mood: str,
     if not data.get("first_letter") and actives:
         data["first_letter"] = actives[0]["ts"]
 
+    a = analysis or _le.analyze(ep.get("user_text", ""))
     notables = data.setdefault("notables", {})
     if a["farewell"] and not notables.get("farewell"):
         notables["farewell"] = ep["date"]
     if "love" in a["topics"] and not notables.get("love"):
         notables["love"] = ep["date"]
 
+
+def record_exchange(user_text: str, reply: str, weather: str, mood: str,
+                    engine: str, now: datetime | None = None, explicit_id: str | None = None) -> dict | None:
+    """一封信收信+回信完成后调用。返回新增的 episode。"""
+    now = now or datetime.now()
+    data = _load()
+    ep, a = _build_episode(user_text, reply, weather, mood, engine, now, explicit_id)
+    _apply_episode(data, ep, a)
     _save(data)
     return ep
+
+
+def _parse_ts(value) -> datetime | None:
+    """宽松解析时间戳：ISO（含 Z / 毫秒 / 时区）与常见日期格式；失败返回 None。"""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.endswith("Z") or s.endswith("z"):
+        s = s[:-1] + "+00:00"
+    dt: datetime | None = None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def _sort_episodes(data: dict) -> None:
+    """按时间升序重排 episodes（无有效时间者排最后，保持相对顺序）。"""
+    def _key(e: dict):
+        dt = _parse_ts(e.get("ts"))
+        return (dt is None, dt or datetime.max)
+    try:
+        data["episodes"].sort(key=_key)
+    except Exception:
+        pass
+
+
+def find_episode(data: dict, ep_id: str = "", text: str = "") -> dict | None:
+    """在记忆数据中查找一封信：先按 id，再按来信正文完全一致。"""
+    ep_id = str(ep_id or "").strip()
+    if ep_id:
+        for e in data.get("episodes", []):
+            if e.get("id") == ep_id:
+                return e
+    clean = text or ""
+    if clean:
+        for e in data.get("episodes", []):
+            if e.get("user_text") == clean:
+                return e
+    return None
+
+
+def distill_letters(letters: list[dict], dry_run: bool = False) -> dict:
+    """把一批信件补记进记忆库（幂等）——供「手动沉淀」与「批量导入」使用。
+
+    规则：
+    - 来信正文为空的条目跳过（skipped_empty）；
+    - 已存在（id 相同或正文完全一致）的跳过：ACTIVE 计 skipped_existing，
+      DELETED 计 skipped_deleted（尊重用户此前的删除决定，不自动复活）；
+    - 新增条目保留信件原本的时间戳 / id / engine（缺省 "imported"），
+      weather / mood 缺省由本地引擎按正文推断；
+    - 写入后按时间排序，并重算 total_letters / first_letter；
+    - dry_run=True 时只统计数量、不落盘（供前端先展示"未入记忆 N 封"）。
+    """
+    data = _load()
+    added: list[dict] = []
+    pending: list[dict] = []        # dry_run 影子列表，保证批内去重统计一致
+    skipped_existing = 0
+    skipped_deleted = 0
+    skipped_empty = 0
+
+    def _lookup(letter_id: str, clean_text: str) -> dict | None:
+        outer = find_episode(data, ep_id=letter_id, text=clean_text)
+        if outer is not None:
+            return outer
+        for p in pending:
+            if letter_id and p.get("id") == letter_id:
+                return p
+            if clean_text and p.get("user_text") == clean_text:
+                return p
+        return None
+
+    for raw in letters or []:
+        if not isinstance(raw, dict):
+            skipped_empty += 1
+            continue
+        text = str(raw.get("text") or raw.get("user_text") or "").strip()
+        if not text:
+            skipped_empty += 1
+            continue
+        letter_id = str(raw.get("id") or "").strip()
+        hit = _lookup(letter_id, text)
+        if hit is not None:
+            if hit.get("deleted") or hit.get("status") == "DELETED":
+                skipped_deleted += 1
+            else:
+                skipped_existing += 1
+            continue
+
+        when = _parse_ts(raw.get("ts")) or datetime.now()
+        reply = raw.get("reply")
+        if reply is None:
+            reply = raw.get("reply_text")
+        reply = str(reply or "")
+        weather = str(raw.get("weather") or "").strip()
+        mood = str(raw.get("mood") or "").strip()
+        if not (weather and mood):
+            w2, m2 = _le.meta_for(text)
+            weather = weather or w2
+            mood = mood or m2
+        engine = str(raw.get("engine") or "").strip() or "imported"
+
+        if dry_run:
+            pending.append({"id": letter_id, "user_text": text})
+            continue
+
+        ep, a = _build_episode(text, reply, weather, mood, engine, when, letter_id or None)
+        _apply_episode(data, ep, a)
+        added.append(ep)
+
+    if dry_run:
+        return {
+            "added": [],
+            "added_count": len(pending),
+            "skipped_existing": skipped_existing,
+            "skipped_deleted": skipped_deleted,
+            "skipped_empty": skipped_empty,
+            "dry_run": True,
+        }
+
+    if added:
+        _sort_episodes(data)
+        actives = _active_episodes(data)
+        data["total_letters"] = len(actives)
+        data["first_letter"] = actives[0]["ts"] if actives else None
+        # 超出容量被裁掉的新条目不计入 added，保证返回值与库内实际一致
+        kept = {e.get("id") for e in data["episodes"]}
+        added = [e for e in added if e.get("id") in kept]
+        _save(data)
+
+    return {
+        "added": added,
+        "added_count": len(added),
+        "skipped_existing": skipped_existing,
+        "skipped_deleted": skipped_deleted,
+        "skipped_empty": skipped_empty,
+        "dry_run": False,
+    }
 
 
 def get_admin_password() -> str:
