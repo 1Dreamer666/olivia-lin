@@ -68,6 +68,7 @@
 ### 1. 平台运行规范与内容铁律（防白屏必读）
 B站 Toy 页面运行在 `/toy/<slug>/` 子路径下：
 - **资源相对路径铁律**：`index.html` 中的 CSS、JS、图片引用**必须全部使用相对路径**（`./css/style.css`、`./js/app.js`、`./poster.jpg`），严禁使用绝对根路径（如 `/css/...`），否则在 Toy 平台会引发资源 404 导致页面白屏；
+- **沙箱 iframe 禁原生弹窗**：Toy 页面运行在带 `sandbox` 的跨域 iframe 中（不含 `allow-modals`），原生 `confirm()` / `alert()` / `prompt()` 会被浏览器**直接忽略**（`confirm` 恒返回 `false`，等同用户点取消），`autofocus` 属性与无用户激活时的编程 `focus()` 也会被拦截（控制台报 `Blocked autofocusing ...`）。页面内一律使用页内组件：导入弹窗的 `#import-verify` 两步确认、设置「恢复默认」的两步点击、`tryFocus()` 聚焦守卫；
 - **纯前端与后端双体验设计**：
   - **默认沉浸模式**：完全脱离 Python 后端运行，依靠内置离线规则、WebAudio 音频合成、首信逻辑呈现完整书信仪式；
   - **自定义模型通道**：用户点击「⚙ 系统设置」，可直接填入任意 OpenAI 兼容（DeepSeek / GPT）、Claude 或 Gemini 的公网 API Endpoint 与 Key，由浏览器直接向大模型发起通信。

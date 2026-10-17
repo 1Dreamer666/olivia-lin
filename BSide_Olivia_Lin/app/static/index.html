@@ -264,7 +264,7 @@
       </div>
       <div class="modal-body">
         <p class="modal-tip">清空与删除记忆是重大决策。查看与恢复被删内容需验证管理密码（默认：123456）：</p>
-        <input type="password" id="admin-pwd-input" class="cfg-input modal-input" placeholder="请输入管理密码" autofocus autocomplete="current-password">
+        <input type="password" id="admin-pwd-input" class="cfg-input modal-input" placeholder="请输入管理密码" autocomplete="current-password">
         <p id="pwd-error" class="modal-err" hidden>密码错误，请重试</p>
       </div>
       <div class="modal-actions">
@@ -290,6 +290,13 @@
           <span id="import-file-name" class="cfg-hint"></span>
         </div>
         <p id="import-status" class="import-status" hidden></p>
+        <div id="import-verify" class="import-verify" hidden>
+          <span id="import-verify-text" class="cfg-hint"></span>
+          <div class="import-verify-actions">
+            <button id="import-verify-no" class="ghostbtn sm">取消</button>
+            <button id="import-verify-yes" class="sendbtn sm">确认导入</button>
+          </div>
+        </div>
       </div>
       <div class="modal-actions">
         <button id="import-cancel-btn" class="ghostbtn">取消</button>

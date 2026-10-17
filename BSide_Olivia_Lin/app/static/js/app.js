@@ -1599,6 +1599,25 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
+/**
+ * 聚焦前先探测环境：跨域 iframe（如 B站 Toy 平台）中，无用户激活时的
+ * 编程聚焦会被浏览器拦截并打印控制台错误——此时跳过（不影响功能）。
+ */
+function tryFocus(el) {
+  if (!el) return;
+  if (window.self !== window.top) {
+    try {
+      void window.top.location.href; // 同源 iframe 可访问；跨域会抛异常
+    } catch (_) {
+      const ua = navigator.userActivation;
+      if (ua && ua.isActive === false) return;
+    }
+  }
+  try {
+    el.focus();
+  } catch (_) {}
+}
+
 function refreshCounter() {
   const el = $("#day-counter");
   if (!el) return;
@@ -1962,7 +1981,7 @@ async function sendLetter(opts = {}) {
       setTimeout(() => card.classList.remove("shake"), 450);
     }
     toast("信纸还是空的。写一句话也行。");
-    if (draft) draft.focus();
+    if (draft) tryFocus(draft);
     return;
   }
 
@@ -2267,6 +2286,21 @@ async function distillHistoryLetters() {
   updateMemoryStatsDisplay();
 }
 
+let pendingImportLetters = null; // 页内两步确认：待导入的信件
+
+function showImportVerify(msg) {
+  const text = $("#import-verify-text");
+  if (text) text.textContent = msg;
+  const box = $("#import-verify");
+  if (box) box.hidden = false;
+}
+
+function hideImportVerify() {
+  pendingImportLetters = null;
+  const box = $("#import-verify");
+  if (box) box.hidden = true;
+}
+
 function openImportDialog() {
   const ta = $("#import-text");
   if (ta) ta.value = "";
@@ -2274,30 +2308,49 @@ function openImportDialog() {
   if (file) file.value = "";
   const fname = $("#import-file-name");
   if (fname) fname.textContent = "";
+  hideImportVerify();
   setImportStatus("", false);
   if (importDialog) importDialog.hidden = false;
-  if (ta) ta.focus();
+  if (ta) tryFocus(ta);
 }
 
 function closeImportDialog() {
+  hideImportVerify();
   if (importDialog) importDialog.hidden = true;
 }
 
-/** 批量导入：解析 → 写入信件存档 → 自动沉淀进记忆 */
-async function runImportLetters() {
+/**
+ * 批量导入第一步：解析后先做页内两步确认。
+ * 不使用原生 confirm()：Toy 平台把页面放在 sandbox iframe 中（无 allow-modals），
+ * confirm() 会被浏览器直接忽略并视为「取消」，导致在线版无法导入。
+ */
+function runImportLetters() {
   const raw = $("#import-text") ? $("#import-text").value : "";
   const parsed = AppCore.parseLetters(raw);
   if (!parsed.ok || !(parsed.letters || []).length) {
+    hideImportVerify();
     setImportStatus(parsed.error || "没有解析到有效信件。", true);
     return;
   }
   const items = parsed.letters;
   const fmt = parsed.format === "json" ? "JSON" : "纯文本";
   const withReply = items.filter((x) => x.reply).length;
-  if (!confirm(`已从${fmt}解析到 ${items.length} 封信（其中 ${withReply} 封带她的回信）。\n\n导入到信件存档并自动沉淀记忆？`)) {
-    setImportStatus(`已取消。解析到 ${items.length} 封信，未导入。`, false);
-    return;
-  }
+  pendingImportLetters = items;
+  setImportStatus("", false);
+  showImportVerify(`已从${fmt}解析到 ${items.length} 封信（其中 ${withReply} 封带她的回信），确认导入到信件存档并自动沉淀记忆？`);
+}
+
+function cancelImportLetters() {
+  const count = (pendingImportLetters || []).length;
+  hideImportVerify();
+  if (count) setImportStatus(`已取消。解析到 ${count} 封信，未导入。`, false);
+}
+
+/** 批量导入第二步：写入信件存档 → 自动沉淀进记忆 */
+async function doImportLetters() {
+  const items = pendingImportLetters || [];
+  if (!items.length) return;
+  hideImportVerify();
   setImportStatus(`正在导入 ${items.length} 封信…`, false);
 
   // 1) 写入信件存档（id / 正文去重；无时间戳的按顺序补在现在之前，保证排序稳定）
@@ -2380,7 +2433,7 @@ function openRegretCenter() {
     if (adminPwdInput) adminPwdInput.value = "123456";
     if (pwdError) pwdError.hidden = true;
     if (pwdDialog) pwdDialog.hidden = false;
-    if (adminPwdInput) adminPwdInput.focus();
+    if (adminPwdInput) tryFocus(adminPwdInput);
   }
 }
 
@@ -2744,8 +2797,23 @@ async function saveSettingsUI() {
   if (settingsDrawer) settingsDrawer.classList.remove("open");
 }
 
+let resetArmedUntil = 0; // 「恢复默认」两步确认窗口（时间戳约定，5 秒内再点一次才生效）
+
 async function resetSettingsUI() {
-  if (!confirm("确定要将所有设置恢复为默认值吗？")) return;
+  const btn = $("#cfg-reset-btn");
+  const now = Date.now();
+  if (now > resetArmedUntil) {
+    // 不使用原生 confirm()：Toy 平台 sandbox iframe（无 allow-modals）会忽略并视为取消
+    resetArmedUntil = now + 5000;
+    if (btn) btn.textContent = "再点一次确认";
+    toast("恢复默认设置：5 秒内再点一次「再点一次确认」");
+    setTimeout(() => {
+      if (Date.now() >= resetArmedUntil && btn) btn.textContent = "恢复默认";
+    }, 5200);
+    return;
+  }
+  resetArmedUntil = 0;
+  if (btn) btn.textContent = "恢复默认";
   AppCore.resetConfig();
   try {
     await fetch("/api/config/reset", { method: "POST" });
@@ -2928,6 +2996,9 @@ function init() {
   $("#import-close")?.addEventListener("click", closeImportDialog);
   $("#import-cancel-btn")?.addEventListener("click", closeImportDialog);
   $("#import-confirm-btn")?.addEventListener("click", runImportLetters);
+  $("#import-verify-yes")?.addEventListener("click", doImportLetters);
+  $("#import-verify-no")?.addEventListener("click", cancelImportLetters);
+  $("#import-text")?.addEventListener("input", hideImportVerify);
 
   const importFile = $("#import-file");
   if (importFile) {
@@ -2940,6 +3011,7 @@ function init() {
         if (ta) ta.value = String(reader.result || "");
         const fname = $("#import-file-name");
         if (fname) fname.textContent = file.name + "（已读入，可直接导入）";
+        hideImportVerify();
         setImportStatus("", false);
       };
       reader.onerror = () => setImportStatus("读取文件失败，请重试。", true);
@@ -3003,7 +3075,7 @@ function init() {
     if (draft) {
       if (!draft.value.trim()) draft.value = line;
       else draft.value += "\n\n" + line;
-      draft.focus();
+      tryFocus(draft);
       onDraftInput();
     }
   });
