@@ -57,6 +57,7 @@ var AppCoreExports = (() => {
     buildSystemPrompt: () => buildSystemPrompt,
     deletedEpisodes: () => deletedEpisodes,
     detectProtocol: () => detectProtocol,
+    distillLetters: () => distillLetters,
     getAdminPassword: () => getAdminPassword,
     getMemoryEcho: () => getMemoryEcho,
     getSummary: () => getSummary,
@@ -64,6 +65,7 @@ var AppCoreExports = (() => {
     loadMemory: () => loadMemory,
     metaFor: () => metaFor,
     moodFor: () => moodFor,
+    parseLetterImport: () => parseLetterImport,
     pickQuote: () => pickQuote,
     recordExchange: () => recordExchange,
     renderMemoryContext: () => renderMemoryContext,
@@ -666,6 +668,134 @@ var AppCoreExports = (() => {
     saveMemory(data);
     return ep;
   }
+  function parseTs(value) {
+    const s = (value || "").trim();
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  function findEpisode(data, epId, text) {
+    const id = (epId || "").trim();
+    if (id) {
+      const hit = data.episodes.find((e) => e.id === id);
+      if (hit) return hit;
+    }
+    const clean = text || "";
+    if (clean) {
+      const hit = data.episodes.find((e) => (e.user_text || "") === clean);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  function sortEpisodes(data) {
+    const key = (e) => {
+      const d = parseTs(e.ts);
+      return d ? d.getTime() : Number.MAX_SAFE_INTEGER;
+    };
+    data.episodes.sort((a, b) => key(a) - key(b));
+  }
+  function distillLetters(letters, options) {
+    const dryRun = Boolean(options?.dryRun);
+    const data = loadMemory();
+    let added = [];
+    const pending = [];
+    let skippedExisting = 0;
+    let skippedDeleted = 0;
+    let skippedEmpty = 0;
+    const lookup = (letterId, cleanText) => {
+      const outer = findEpisode(data, letterId, cleanText);
+      if (outer) return outer;
+      for (const p of pending) {
+        if (letterId && p.id === letterId) return { pending: true };
+        if (cleanText && p.user_text === cleanText) return { pending: true };
+      }
+      return null;
+    };
+    for (const raw of letters || []) {
+      const text = String(raw && raw.text || "").trim();
+      if (!text) {
+        skippedEmpty++;
+        continue;
+      }
+      const letterId = String(raw.id || "").trim();
+      const hit = lookup(letterId, text);
+      if (hit) {
+        if ("pending" in hit) {
+          skippedExisting++;
+        } else if (hit.deleted || hit.status === "DELETED") {
+          skippedDeleted++;
+        } else {
+          skippedExisting++;
+        }
+        continue;
+      }
+      const when = parseTs(raw.ts) || /* @__PURE__ */ new Date();
+      const meta = metaFor(text, when);
+      const weather = String(raw.weather || "").trim() || meta.weather;
+      const mood = String(raw.mood || "").trim() || meta.mood;
+      const engine = String(raw.engine || "").trim() || "imported";
+      const reply = String(raw.reply || "");
+      if (dryRun) {
+        pending.push({ id: letterId, user_text: text });
+        continue;
+      }
+      const a = analyzeText(text);
+      const ep = {
+        id: letterId || `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        ts: when.toISOString(),
+        date: when.toISOString().slice(0, 10),
+        topics: a.topics.slice(0, 5),
+        weather,
+        mood,
+        engine,
+        user_digest: text.replace(/\n/g, " ").slice(0, 40),
+        reply_digest: reply.trim().split("\n\n")[0].slice(0, 80),
+        user_text: text,
+        reply_text: reply,
+        farewell: Boolean(a.farewell),
+        status: "ACTIVE",
+        deleted: false
+      };
+      data.episodes.push(ep);
+      if (data.episodes.length > 200) {
+        data.episodes = data.episodes.slice(-200);
+      }
+      added.push(ep);
+    }
+    if (dryRun) {
+      return {
+        ok: true,
+        added: [],
+        added_count: pending.length,
+        skipped_existing: skippedExisting,
+        skipped_deleted: skippedDeleted,
+        skipped_empty: skippedEmpty,
+        dry_run: true
+      };
+    }
+    if (added.length > 0) {
+      sortEpisodes(data);
+      const actives = activeEpisodes(data);
+      data.total_letters = actives.length;
+      data.first_letter = actives.length > 0 ? actives[0].ts : null;
+      const kept = new Set(data.episodes.map((e) => e.id));
+      added = added.filter((e) => kept.has(e.id));
+      for (const ep of added) {
+        if (ep.farewell && !data.notables.farewell) data.notables.farewell = ep.date;
+        if (ep.topics.includes("love") && !data.notables.love) data.notables.love = ep.date;
+      }
+      saveMemory(data);
+    }
+    return {
+      ok: true,
+      added,
+      added_count: added.length,
+      skipped_existing: skippedExisting,
+      skipped_deleted: skippedDeleted,
+      skipped_empty: skippedEmpty,
+      dry_run: false
+    };
+  }
   function softDeleteEpisode(payload) {
     const data = loadMemory();
     let changed = false;
@@ -833,6 +963,112 @@ var AppCoreExports = (() => {
       return null;
     }
     return null;
+  }
+
+  // src/letterImport.ts
+  var TEXT_KEYS = ["text", "content", "letter", "user_text", "userText", "user", "body", "message"];
+  var REPLY_KEYS = ["reply", "reply_text", "replyText", "answer", "response", "her_reply", "her"];
+  var TS_KEYS = ["ts", "time", "date", "timestamp", "created_at", "createdAt"];
+  var CONTAINER_KEYS = ["episodes", "letters", "history", "items", "data", "list"];
+  var REPLY_MARKER = /^\s*【\s*(?:林离|回信|她的回信|回信内容)\s*】\s*(.*)$/;
+  var SEPARATOR = /^\s*[-=*_~]{3,}\s*$/;
+  function pickString(obj, keys) {
+    for (const k of keys) {
+      const v = obj[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return "";
+  }
+  function normalizeItem(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const text = pickString(raw, TEXT_KEYS);
+    if (!text) return null;
+    const item = { text };
+    const reply = pickString(raw, REPLY_KEYS);
+    if (reply) item.reply = reply;
+    const ts = pickString(raw, TS_KEYS);
+    if (ts) item.ts = ts;
+    for (const key of ["weather", "mood", "engine", "id"]) {
+      const v = raw[key];
+      if (typeof v === "string" && v.trim()) item[key] = v.trim();
+    }
+    return item;
+  }
+  function extractJsonItems(parsed) {
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object") {
+      for (const k of CONTAINER_KEYS) {
+        if (Array.isArray(parsed[k])) return parsed[k];
+      }
+      return [parsed];
+    }
+    return [];
+  }
+  function parsePlainText(input) {
+    const lines = input.replace(/\r\n?/g, "\n").split("\n");
+    const blocks = [];
+    let cur = [];
+    for (const line of lines) {
+      if (SEPARATOR.test(line)) {
+        blocks.push(cur);
+        cur = [];
+      } else {
+        cur.push(line);
+      }
+    }
+    blocks.push(cur);
+    const items = [];
+    for (const block of blocks) {
+      let replyIdx = -1;
+      let replyFirst = "";
+      for (let i = 0; i < block.length; i++) {
+        const m = block[i].match(REPLY_MARKER);
+        if (m) {
+          replyIdx = i;
+          replyFirst = (m[1] || "").trim();
+          break;
+        }
+      }
+      const textLines = replyIdx >= 0 ? block.slice(0, replyIdx) : block;
+      const replyLines = replyIdx >= 0 ? (replyFirst ? [replyFirst] : []).concat(block.slice(replyIdx + 1)) : [];
+      const text = textLines.join("\n").trim();
+      if (!text) continue;
+      const item = { text };
+      const reply = replyLines.join("\n").trim();
+      if (reply) item.reply = reply;
+      items.push(item);
+    }
+    return items;
+  }
+  function parseLetterImport(input) {
+    const raw = input || "";
+    if (!raw.trim()) {
+      return { ok: false, format: "none", letters: [], error: "\u5185\u5BB9\u662F\u7A7A\u7684\uFF0C\u5148\u7C98\u8D34\u6216\u9009\u62E9\u4E00\u4E2A\u6587\u4EF6\u3002" };
+    }
+    const head = raw.trim()[0];
+    if (head === "[" || head === "{") {
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        return { ok: false, format: "json", letters: [], error: `JSON \u89E3\u6790\u5931\u8D25\uFF1A${err?.message || err}` };
+      }
+      const letters2 = extractJsonItems(parsed).map(normalizeItem).filter((it) => it !== null);
+      if (letters2.length === 0) {
+        return {
+          ok: false,
+          format: "json",
+          letters: [],
+          error: '\u6CA1\u4ECE JSON \u91CC\u627E\u5230\u4FE1\u4EF6\u3002\u652F\u6301 [{"text":"\u2026"}]\u3001{"letters"/"episodes"/"history":[\u2026]} \u6216\u5355\u5C01\u4FE1\u5BF9\u8C61\u3002'
+        };
+      }
+      return { ok: true, format: "json", letters: letters2 };
+    }
+    const letters = parsePlainText(raw);
+    if (letters.length === 0) {
+      return { ok: false, format: "text", letters: [], error: "\u6CA1\u6709\u89E3\u6790\u5230\u6709\u6548\u4FE1\u4EF6\uFF08\u591A\u5C01\u8BF7\u7528\u4E00\u884C --- \u5206\u9694\uFF09\u3002" };
+    }
+    return { ok: true, format: "text", letters };
   }
 
   // src/modelClient.ts
@@ -1189,7 +1425,19 @@ var AppCoreExports = (() => {
         const restoredList = restoreEpisodes(ids || id);
         return { ok: true, restored: restoredList.length, restored_count: restoredList.length, items: restoredList };
       }
+      if (action === "distill_letters") {
+        const letters = Array.isArray(payload?.letters) ? payload.letters : [];
+        return { ok: true, ...distillLetters(letters, { dryRun: Boolean(payload?.dry_run) }) };
+      }
       return { ok: false, error: "\u672A\u77E5\u64CD\u4F5C" };
+    }
+    /** 解析批量导入信件（JSON / 纯文本），返回 {ok, format, letters, error?} */
+    static parseLetters(input) {
+      return parseLetterImport(input);
+    }
+    /** 把一批信件沉淀进记忆库（幂等；dryRun 只统计不落盘） */
+    static distillLetters(letters, options) {
+      return distillLetters(Array.isArray(letters) ? letters : [], options);
     }
     static async sendLetter(text, force) {
       const cfg = loadAppConfig();
@@ -1252,6 +1500,7 @@ var AppCoreExports = (() => {
   };
   return __toCommonJS(index_exports);
 })();
+
 
 
 
@@ -1873,11 +2122,11 @@ function renderHistory() {
   [...state.history].reverse().forEach((item) => {
     const li = document.createElement("li");
     const d = new Date(item.ts);
-    const isModel = item.engine === "model";
+    const engineLabel = item.engine === "imported" ? "导入" : (item.engine === "model" ? "模型" : "本地引擎");
     li.innerHTML = `
       <div class="h-meta">
         <span>${d.getMonth() + 1} 月 ${d.getDate()} 日 ${fmtTime(d)} · ${item.weather || "—"}</span>
-        <span>${isModel ? "模型" : "本地引擎"}</span>
+        <span>${engineLabel}</span>
       </div>
       <div class="h-txt"></div>
       <div class="h-act">
@@ -1932,6 +2181,190 @@ function restoreHistoryItem(item) {
   renderStatic(herBody, item.reply);
   if (historyDrawer) historyDrawer.classList.remove("open");
   toast("已翻出这封信");
+}
+
+/* ---------------- 记忆沉淀与批量导入 ---------------- */
+
+const importDialog = $("#import-dialog");
+
+function historyItemToLetter(item) {
+  return {
+    id: item.id,
+    ts: item.ts,
+    text: item.text || "",
+    reply: item.reply || "",
+    weather: item.weather || "",
+    mood: item.mood || "",
+    engine: item.engine || "",
+  };
+}
+
+function setDistillStatus(msg) {
+  const el = $("#cfg-distill-status");
+  if (el) el.textContent = msg || "";
+}
+
+function setImportStatus(msg, isError) {
+  const el = $("#import-status");
+  if (!el) return;
+  if (!msg) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  el.textContent = msg;
+  el.classList.toggle("error", !!isError);
+}
+
+/** 沉淀一批信件：优先服务端（EXE/源码服务模式），失败或无服务端时走浏览器记忆库 */
+async function distillLettersFlow(letters, opts = {}) {
+  try {
+    const r = await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "distill_letters", letters, dry_run: !!opts.dryRun }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && data.ok) return data;
+    }
+  } catch (_) {}
+  try {
+    return AppCore.distillLetters(letters, { dryRun: !!opts.dryRun });
+  } catch (e) {
+    console.warn("沉淀记忆失败:", e);
+    return null;
+  }
+}
+
+/** 「沉淀未入记忆的信件」：先 dry-run 预览，再把存档补记进记忆库 */
+async function distillHistoryLetters() {
+  const letters = state.history.map(historyItemToLetter);
+  if (!letters.length) { toast("信件存档还是空的，没有可沉淀的信件。"); return; }
+  setDistillStatus("正在检查未入记忆的信件…");
+  const pre = await distillLettersFlow(letters, { dryRun: true });
+  if (!pre) {
+    setDistillStatus("沉淀失败：无法访问记忆库。");
+    toast("沉淀失败，请稍后再试。");
+    return;
+  }
+  if ((pre.added_count || 0) === 0) {
+    const deletedHint = pre.skipped_deleted ? `，另有曾删除的 ${pre.skipped_deleted} 封（尊重删除决定，未复活）` : "";
+    setDistillStatus(`存档中 ${letters.length} 封均已入记忆${deletedHint}。`);
+    toast("没有需要沉淀的新信件。");
+    return;
+  }
+  const res = await distillLettersFlow(letters);
+  if (!res) {
+    setDistillStatus("沉淀失败：无法写入记忆库。");
+    toast("沉淀失败，请稍后再试。");
+    return;
+  }
+  const parts = [`已沉淀 ${res.added_count || 0} 封新信件`];
+  if (res.skipped_existing) parts.push(`已在记忆 ${res.skipped_existing} 封`);
+  if (res.skipped_deleted) parts.push(`曾删除跳过 ${res.skipped_deleted} 封`);
+  const msg = parts.join("，") + "。";
+  setDistillStatus(msg);
+  toast(msg);
+  audio.chord();
+  updateMemoryStatsDisplay();
+}
+
+function openImportDialog() {
+  const ta = $("#import-text");
+  if (ta) ta.value = "";
+  const file = $("#import-file");
+  if (file) file.value = "";
+  const fname = $("#import-file-name");
+  if (fname) fname.textContent = "";
+  setImportStatus("", false);
+  if (importDialog) importDialog.hidden = false;
+  if (ta) ta.focus();
+}
+
+function closeImportDialog() {
+  if (importDialog) importDialog.hidden = true;
+}
+
+/** 批量导入：解析 → 写入信件存档 → 自动沉淀进记忆 */
+async function runImportLetters() {
+  const raw = $("#import-text") ? $("#import-text").value : "";
+  const parsed = AppCore.parseLetters(raw);
+  if (!parsed.ok || !(parsed.letters || []).length) {
+    setImportStatus(parsed.error || "没有解析到有效信件。", true);
+    return;
+  }
+  const items = parsed.letters;
+  const fmt = parsed.format === "json" ? "JSON" : "纯文本";
+  const withReply = items.filter((x) => x.reply).length;
+  if (!confirm(`已从${fmt}解析到 ${items.length} 封信（其中 ${withReply} 封带她的回信）。\n\n导入到信件存档并自动沉淀记忆？`)) {
+    setImportStatus(`已取消。解析到 ${items.length} 封信，未导入。`, false);
+    return;
+  }
+  setImportStatus(`正在导入 ${items.length} 封信…`, false);
+
+  // 1) 写入信件存档（id / 正文去重；无时间戳的按顺序补在现在之前，保证排序稳定）
+  const now = Date.now();
+  const prepared = items.map((it, i) => ({
+    ...it,
+    id: it.id || `ep_import_${now.toString(36)}_${i.toString(36)}`,
+    ts: it.ts || new Date(now - (items.length - 1 - i) * 1000).toISOString(),
+  }));
+  const existingIds = new Set(state.history.map((x) => x.id));
+  const existingTexts = new Set(state.history.map((x) => x.text));
+  let histAdded = 0;
+  let histSkipped = 0;
+  for (const it of prepared) {
+    if (existingIds.has(it.id) || existingTexts.has(it.text)) { histSkipped++; continue; }
+    state.history.push({
+      id: it.id,
+      ts: it.ts,
+      text: it.text,
+      reply: it.reply || "",
+      weather: it.weather || "",
+      mood: it.mood || "",
+      engine: it.engine || "imported",
+    });
+    existingIds.add(it.id);
+    existingTexts.add(it.text);
+    histAdded++;
+  }
+  state.history.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  if (state.history.length > 60) state.history = state.history.slice(-60);
+  localStorage.setItem(LS.history, JSON.stringify(state.history));
+  renderHistory();
+
+  // 2) 自动沉淀进记忆
+  const res = await distillLettersFlow(prepared);
+  if (res && (res.added || []).length) {
+    // 把推断出的天气 / 心情与最终 id 回写到存档条目
+    const byId = new Map(res.added.map((e) => [e.id, e]));
+    const byText = new Map(res.added.map((e) => [e.user_text, e]));
+    let touched = false;
+    for (const it of state.history) {
+      const ep = byId.get(it.id) || byText.get(it.text);
+      if (!ep) continue;
+      if (!it.weather && ep.weather) { it.weather = ep.weather; touched = true; }
+      if (!it.mood && ep.mood) { it.mood = ep.mood; touched = true; }
+      if (ep.id && it.id !== ep.id) { it.id = ep.id; touched = true; }
+    }
+    if (touched) {
+      localStorage.setItem(LS.history, JSON.stringify(state.history));
+      renderHistory();
+    }
+  }
+
+  const parts = [`已导入存档 ${histAdded} 封`];
+  if (histSkipped) parts.push(`存档已存在 ${histSkipped} 封`);
+  if (res) {
+    parts.push(`沉淀入记忆 ${res.added_count || 0} 封`);
+    if (res.skipped_existing) parts.push(`已在记忆 ${res.skipped_existing} 封`);
+    if (res.skipped_deleted) parts.push(`曾删除跳过 ${res.skipped_deleted} 封`);
+  } else {
+    parts.push("沉淀失败（记忆库暂不可用，可稍后点「沉淀未入记忆的信件」重试）");
+  }
+  const msg = parts.join("，") + "。";
+  setImportStatus(msg, !res);
+  toast(msg);
+  if (res) audio.chord();
+  updateMemoryStatsDisplay();
 }
 
 const regretDrawer = $("#regret-drawer");
@@ -2021,6 +2454,9 @@ function renderRegretListUI() {
     li.className = "regret-item";
     const epId = item.id || `ep_${item.ts}`;
     const isModel = item.engine === "model";
+    const isImported = item.engine === "imported";
+    const badgeClass = isModel ? "badge-model" : isImported ? "badge-imported" : "badge-local";
+    const badgeText = isModel ? "🤖 模型" : isImported ? "📥 导入" : "🌱 本地";
     const userDisplay = item.user_text || item.user_digest || item.text || "（无来信记录）";
     const replyDisplay = item.reply_text || item.reply_digest || item.reply || "（无回信记录）";
 
@@ -2030,7 +2466,7 @@ function renderRegretListUI() {
         <div class="regret-meta">
           <span>${item.date || (item.ts ? item.ts.slice(0, 10) : "未知日期")} · ${item.weather || "—"}</span>
           <div>
-            <span class="engine-badge ${isModel ? "badge-model" : "badge-local"}">${isModel ? "🤖 模型" : "🌱 本地"}</span>
+            <span class="engine-badge ${badgeClass}">${badgeText}</span>
             <span class="regret-tag">DELETED</span>
           </div>
         </div>
@@ -2486,6 +2922,35 @@ function init() {
   $("#cfg-regret-btn")?.addEventListener("click", openRegretCenter);
   $("#regret-close")?.addEventListener("click", () => regretDrawer?.classList.remove("open"));
 
+  $("#history-distill-btn")?.addEventListener("click", distillHistoryLetters);
+  $("#cfg-distill-btn")?.addEventListener("click", distillHistoryLetters);
+  $("#cfg-import-open-btn")?.addEventListener("click", openImportDialog);
+  $("#import-close")?.addEventListener("click", closeImportDialog);
+  $("#import-cancel-btn")?.addEventListener("click", closeImportDialog);
+  $("#import-confirm-btn")?.addEventListener("click", runImportLetters);
+
+  const importFile = $("#import-file");
+  if (importFile) {
+    importFile.addEventListener("change", () => {
+      const file = importFile.files && importFile.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const ta = $("#import-text");
+        if (ta) ta.value = String(reader.result || "");
+        const fname = $("#import-file-name");
+        if (fname) fname.textContent = file.name + "（已读入，可直接导入）";
+        setImportStatus("", false);
+      };
+      reader.onerror = () => setImportStatus("读取文件失败，请重试。", true);
+      reader.readAsText(file, "utf-8");
+    });
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && importDialog && !importDialog.hidden) closeImportDialog();
+  });
+
   $("#pwd-close")?.addEventListener("click", () => { if (pwdDialog) pwdDialog.hidden = true; });
   $("#pwd-cancel-btn")?.addEventListener("click", () => { if (pwdDialog) pwdDialog.hidden = true; });
   $("#pwd-confirm-btn")?.addEventListener("click", verifyAndEnterRegret);
@@ -2550,7 +3015,8 @@ function init() {
       }
     }
     if (settingsDrawer?.classList.contains("open")) {
-      if (!settingsDrawer.contains(e.target) && e.target !== $("#settings-toggle") && !$("#settings-toggle")?.contains(e.target)) {
+      if (!settingsDrawer.contains(e.target) && e.target !== $("#settings-toggle") && !$("#settings-toggle")?.contains(e.target)
+          && !(importDialog && importDialog.contains(e.target))) {
         settingsDrawer.classList.remove("open");
       }
     }

@@ -18,7 +18,9 @@ import {
   verifyAdminPassword,
   renderMemoryContext,
   getMemoryEcho,
+  distillLetters as distillLettersImpl,
 } from './memoryBank';
+import { parseLetterImport } from './letterImport';
 import { askModel, detectProtocol } from './modelClient';
 
 export class AppCore {
@@ -82,7 +84,21 @@ export class AppCore {
       const restoredList = restoreEpisodes(ids || id);
       return { ok: true, restored: restoredList.length, restored_count: restoredList.length, items: restoredList };
     }
+    if (action === 'distill_letters') {
+      const letters = Array.isArray(payload?.letters) ? payload.letters : [];
+      return { ok: true, ...distillLettersImpl(letters, { dryRun: Boolean(payload?.dry_run) }) };
+    }
     return { ok: false, error: '未知操作' };
+  }
+
+  /** 解析批量导入信件（JSON / 纯文本），返回 {ok, format, letters, error?} */
+  public static parseLetters(input: string) {
+    return parseLetterImport(input);
+  }
+
+  /** 把一批信件沉淀进记忆库（幂等；dryRun 只统计不落盘） */
+  public static distillLetters(letters: any[], options?: { dryRun?: boolean }) {
+    return distillLettersImpl(Array.isArray(letters) ? letters : [], options);
   }
 
   public static async sendLetter(text: string, force?: string): Promise<LetterResponse> {

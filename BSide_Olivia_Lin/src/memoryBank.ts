@@ -3,8 +3,8 @@
  * 基于浏览器 LocalStorage 持久化存储与软删除/后悔处系统
  */
 
-import { Episode, MemoryData } from './types';
-import { analyzeText } from './localEngine';
+import { Episode, MemoryData, LetterImportItem, DistillResult } from './types';
+import { analyzeText, metaFor } from './localEngine';
 
 export const MAX_EPISODES = 30;
 export const RECENT_IN_PROMPT = 5;
@@ -136,6 +136,160 @@ export function recordExchange(
 
   saveMemory(data);
   return ep;
+}
+
+/** 宽松解析时间戳（ISO / 常见日期格式）；失败返回 null */
+function parseTs(value?: string): Date | null {
+  const s = (value || '').trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** 在记忆中查找一封信：先按 id，再按来信正文完全一致 */
+function findEpisode(data: MemoryData, epId?: string, text?: string): Episode | null {
+  const id = (epId || '').trim();
+  if (id) {
+    const hit = data.episodes.find(e => e.id === id);
+    if (hit) return hit;
+  }
+  const clean = text || '';
+  if (clean) {
+    const hit = data.episodes.find(e => (e.user_text || '') === clean);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** 按时间升序重排 episodes（无有效时间者排最后，保持相对顺序） */
+function sortEpisodes(data: MemoryData): void {
+  const key = (e: Episode): number => {
+    const d = parseTs(e.ts);
+    return d ? d.getTime() : Number.MAX_SAFE_INTEGER;
+  };
+  data.episodes.sort((a, b) => key(a) - key(b));
+}
+
+/**
+ * 把一批信件补记进记忆库（幂等）——供「手动沉淀」与「批量导入」使用。
+ * 规则与 Python 侧 memory_bank.distill_letters 一致：
+ * - 正文为空的条目跳过（skipped_empty）；
+ * - 已存在（id 相同或正文完全一致）的跳过：ACTIVE 计 skipped_existing，
+ *   DELETED 计 skipped_deleted（不复活）；
+ * - 新增条目保留信件原本的时间戳 / id / engine（缺省 'imported'），
+ *   weather / mood 缺省由本地引擎按正文推断；
+ * - 写入后按时间排序并重算 total_letters / first_letter；dryRun 只统计不落盘。
+ */
+export function distillLetters(letters: LetterImportItem[], options?: { dryRun?: boolean }): DistillResult {
+  const dryRun = Boolean(options?.dryRun);
+  const data = loadMemory();
+  let added: Episode[] = [];
+  const pending: Array<{ id: string; user_text: string }> = [];  // dryRun 影子列表，保证批内去重统计一致
+  let skippedExisting = 0;
+  let skippedDeleted = 0;
+  let skippedEmpty = 0;
+
+  const lookup = (letterId: string, cleanText: string): Episode | { pending: true } | null => {
+    const outer = findEpisode(data, letterId, cleanText);
+    if (outer) return outer;
+    for (const p of pending) {
+      if (letterId && p.id === letterId) return { pending: true };
+      if (cleanText && p.user_text === cleanText) return { pending: true };
+    }
+    return null;
+  };
+
+  for (const raw of letters || []) {
+    const text = String((raw && raw.text) || '').trim();
+    if (!text) {
+      skippedEmpty++;
+      continue;
+    }
+    const letterId = String(raw.id || '').trim();
+    const hit = lookup(letterId, text);
+    if (hit) {
+      if ('pending' in hit) {
+        skippedExisting++;
+      } else if (hit.deleted || hit.status === 'DELETED') {
+        skippedDeleted++;
+      } else {
+        skippedExisting++;
+      }
+      continue;
+    }
+
+    const when = parseTs(raw.ts) || new Date();
+    const meta = metaFor(text, when);
+    const weather = String(raw.weather || '').trim() || meta.weather;
+    const mood = String(raw.mood || '').trim() || meta.mood;
+    const engine = String(raw.engine || '').trim() || 'imported';
+    const reply = String(raw.reply || '');
+
+    if (dryRun) {
+      pending.push({ id: letterId, user_text: text });
+      continue;
+    }
+
+    const a = analyzeText(text);
+    const ep: Episode = {
+      id: letterId || `ep_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      ts: when.toISOString(),
+      date: when.toISOString().slice(0, 10),
+      topics: a.topics.slice(0, 5),
+      weather,
+      mood,
+      engine,
+      user_digest: text.replace(/\n/g, ' ').slice(0, 40),
+      reply_digest: reply.trim().split('\n\n')[0].slice(0, 80),
+      user_text: text,
+      reply_text: reply,
+      farewell: Boolean(a.farewell),
+      status: 'ACTIVE',
+      deleted: false,
+    };
+    data.episodes.push(ep);
+    if (data.episodes.length > 200) {
+      data.episodes = data.episodes.slice(-200);
+    }
+    added.push(ep);
+  }
+
+  if (dryRun) {
+    return {
+      ok: true,
+      added: [],
+      added_count: pending.length,
+      skipped_existing: skippedExisting,
+      skipped_deleted: skippedDeleted,
+      skipped_empty: skippedEmpty,
+      dry_run: true,
+    };
+  }
+
+  if (added.length > 0) {
+    sortEpisodes(data);
+    const actives = activeEpisodes(data);
+    data.total_letters = actives.length;
+    data.first_letter = actives.length > 0 ? actives[0].ts : null;
+    // 超出容量被裁掉的新条目不计入 added，保证返回值与库内实际一致
+    const kept = new Set(data.episodes.map(e => e.id));
+    added = added.filter(e => kept.has(e.id));
+    for (const ep of added) {
+      if (ep.farewell && !data.notables.farewell) data.notables.farewell = ep.date;
+      if (ep.topics.includes('love') && !data.notables.love) data.notables.love = ep.date;
+    }
+    saveMemory(data);
+  }
+
+  return {
+    ok: true,
+    added,
+    added_count: added.length,
+    skipped_existing: skippedExisting,
+    skipped_deleted: skippedDeleted,
+    skipped_empty: skippedEmpty,
+    dry_run: false,
+  };
 }
 
 export function softDeleteEpisode(payload: any): boolean {

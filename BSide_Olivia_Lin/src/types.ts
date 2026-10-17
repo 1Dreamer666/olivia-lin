@@ -74,3 +74,32 @@ export interface EngineStatus {
     max_letters_per_day: number;
   };
 }
+
+/** 批量导入信件解析出的单封信（沉淀前的输入结构） */
+export interface LetterImportItem {
+  text: string;
+  reply?: string;
+  ts?: string;
+  weather?: string;
+  mood?: string;
+  engine?: string;
+  id?: string;
+}
+
+export interface LetterImportResult {
+  ok: boolean;
+  format: 'json' | 'text' | 'none';
+  letters: LetterImportItem[];
+  error?: string;
+}
+
+/** distill_letters（沉淀/导入入记忆）结果统计 */
+export interface DistillResult {
+  ok: boolean;
+  added: Episode[];
+  added_count: number;
+  skipped_existing: number;
+  skipped_deleted: number;
+  skipped_empty: number;
+  dry_run: boolean;
+}

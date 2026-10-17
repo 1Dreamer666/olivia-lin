@@ -122,6 +122,7 @@
           <span class="hold-progress"></span>
           <span class="hold-label">清空 (长按3秒)</span>
         </button>
+        <button id="history-distill-btn" class="ghostbtn sm" title="扫描信件存档，把尚未进入记忆的信件补记进记忆库">沉淀入记忆</button>
         <button id="history-regret-btn" class="ghostbtn sm accent-link" title="管理被删除的记忆与信件">后悔处 ⏳</button>
       </h2>
       <button id="history-close" class="iconbtn" aria-label="关闭">×</button>
@@ -199,6 +200,18 @@
         </div>
       </div>
 
+      <div class="cfg-divider"></div>
+
+      <div class="cfg-group">
+        <label class="cfg-label">信件沉淀与批量导入</label>
+        <span class="cfg-hint">「信件存档」里尚未进入记忆的信件（例如模型离线时寄出的），可一键补记进记忆库；也可粘贴或选择文件批量导入信件，导入后自动沉淀记忆。</span>
+        <div class="cfg-secondary-actions cfg-mem-tools">
+          <button id="cfg-distill-btn" class="ghostbtn sm" title="扫描信件存档，把尚未进入记忆的信件补记进记忆库（幂等，已删的不复活）">沉淀未入记忆的信件</button>
+          <button id="cfg-import-open-btn" class="ghostbtn sm" title="粘贴或选择文件批量导入信件，并自动沉淀进记忆库">批量导入信件…</button>
+        </div>
+        <span class="cfg-hint" id="cfg-distill-status"></span>
+      </div>
+
       <div class="cfg-actions">
         <button id="cfg-save-btn" class="sendbtn full-width">保存并应用</button>
         <div class="cfg-secondary-actions">
@@ -257,6 +270,30 @@
       <div class="modal-actions">
         <button id="pwd-cancel-btn" class="ghostbtn">取消</button>
         <button id="pwd-confirm-btn" class="sendbtn sm">验证并进入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量导入信件弹窗 -->
+  <div id="import-dialog" class="modal-overlay" hidden>
+    <div class="modal-card import-card">
+      <div class="modal-head">
+        <h3 class="modal-title">批量导入信件</h3>
+        <button id="import-close" class="iconbtn sm" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-tip">支持 <b>JSON</b>（<code>[{"text":"…","reply":"…","ts":"…"}]</code>、记忆文件 / 存档导出、<code>{"letters":[…]}</code>）与<b>纯文本</b>（多封用一行 <code>---</code> 分隔；每封可用 <code>【林离】</code> 分隔你的信与她的回信）。导入后将写入信件存档并自动沉淀进记忆库。</p>
+        <textarea id="import-text" class="cfg-input modal-textarea" rows="9" spellcheck="false" placeholder="在此粘贴要导入的信件……"></textarea>
+        <div class="import-file-row">
+          <label class="ghostbtn sm import-file-label" for="import-file">选择文件…</label>
+          <input type="file" id="import-file" accept=".json,.txt,.md,.log,.jsonl" hidden>
+          <span id="import-file-name" class="cfg-hint"></span>
+        </div>
+        <p id="import-status" class="import-status" hidden></p>
+      </div>
+      <div class="modal-actions">
+        <button id="import-cancel-btn" class="ghostbtn">取消</button>
+        <button id="import-confirm-btn" class="sendbtn sm">导入并沉淀</button>
       </div>
     </div>
   </div>
