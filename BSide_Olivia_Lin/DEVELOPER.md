@@ -68,6 +68,7 @@
 ### 1. 平台运行规范与内容铁律（防白屏必读）
 B站 Toy 页面运行在 `/toy/<slug>/` 子路径下：
 - **资源相对路径铁律**：`index.html` 中的 CSS、JS、图片引用**必须全部使用相对路径**（`./css/style.css`、`./js/app.js`、`./poster.jpg`），严禁使用绝对根路径（如 `/css/...`），否则在 Toy 平台会引发资源 404 导致页面白屏；
+- **沙箱 iframe 禁原生弹窗**：Toy 页面运行在带 `sandbox` 的跨域 iframe 中（不含 `allow-modals`），原生 `confirm()` / `alert()` / `prompt()` 会被浏览器**直接忽略**（`confirm` 恒返回 `false`，等同用户点取消），`autofocus` 属性与无用户激活时的编程 `focus()` 也会被拦截（控制台报 `Blocked autofocusing ...`）。页面内一律使用页内组件：导入弹窗的 `#import-verify` 两步确认、设置「恢复默认」的两步点击、`tryFocus()` 聚焦守卫；
 - **纯前端与后端双体验设计**：
   - **默认沉浸模式**：完全脱离 Python 后端运行，依靠内置离线规则、WebAudio 音频合成、首信逻辑呈现完整书信仪式；
   - **自定义模型通道**：用户点击「⚙ 系统设置」，可直接填入任意 OpenAI 兼容（DeepSeek / GPT）、Claude 或 Gemini 的公网 API Endpoint 与 Key，由浏览器直接向大模型发起通信。
@@ -146,11 +147,11 @@ BSide_Olivia_Lin/
 │   └── static/               ← 前端静态应用（也是 B站 Toy 部署的根目录）
 │       ├── index.html        ← 信箱主界面（纯相对路径，昼夜切换、火漆印章、打字机、设置抽屉、后悔处）
 │       ├── css/style.css     ← 极简复古信纸样式
-│       └── js/app.js         ← 前端交互核心（打字机、WebAudio 琴音、雨天 Canvas、3秒长按保护、后悔处）
+│       └── js/app.js         ← 前端交互核心（打字机、WebAudio 琴音、雨天 Canvas、3秒长按保护、后悔处、信件沉淀与批量导入）
 ├── skill/
 │   ├── config.py             ← 动态配置加载与跨平台路径解耦
 │   ├── model_client.py       ← 多协议大模型客户端（OpenAI / Gemini / Claude / Auto）
-│   ├── memory_bank.py        ← 三级记忆库（L1工作/L2情景/L3长期，DELETED 软删除，后悔处密码校验与回归）
+│   ├── memory_bank.py        ← 三级记忆库（L1工作/L2情景/L3长期，DELETED 软删除，后悔处密码校验与回归，distill_letters 幂等补记）
 │   ├── local_engine.py       ← 本地离线人格回信引擎（情绪词典、长短信、天气匹配、记忆回声）
 │   └── loader.py             ← 组装完整的 Prompt 注入块
 ├── persona/                  ← 林离人格建模（硬规则、身份、大五参数、语言风格、书信技艺）
@@ -165,6 +166,16 @@ BSide_Olivia_Lin/
 - **DELETED 状态保护**：清空或删除记忆记录时，在 `data/memory.json` 中标记 `status: "DELETED"` 与 `deleted: true`，绝不物理抹除数据；
 - **AI 提示词与前端过滤**：生成 Prompt 与常规前端展示时严格剔除 DELETED 项；
 - **后悔处（回收站）**：验证管理密码（默认 `123456`，可在 `config.json` 中配置）后，支持单选、多选与全选批量恢复为 `ACTIVE` 状态。
+
+### 3. 信件沉淀与批量导入（记忆补记管线）
+- **服务端（源码 / EXE）**：`skill/memory_bank.distill_letters(letters, dry_run=False)` 幂等补记——
+  - 以 `id` 优先、正文完全一致兜底判重；已 `DELETED` 的跳过且不复活；
+  - 保留来信原时间戳与 `engine`（缺省 `"imported"`），`weather` / `mood` 缺省由本地引擎按正文推断；
+  - 写入后按时间升序重排并重算 `total_letters` / `first_letter`；记忆库容量上限 200 条（超出时裁剪最早条目）；
+  - HTTP：`POST /api/memory`，`{"action": "distill_letters", "letters": [{"text": "…", "reply": "…", "ts": "…"}]}`（`letters` 上限 500 条）；带 `"dry_run": true` 时只统计不落盘。
+- **纯前端（Toy / 静态版）**：`src/letterImport.ts#parseLetterImport()` 解析批量导入文本（JSON：数组 / `letters|episodes|history|items|data` 容器 / 记忆文件结构 / 单封信；纯文本：一行 `---` 分隔多封、`【林离】` / `【回信】` 分隔回信）；`src/memoryBank.ts#distillLetters()` 在 LocalStorage 上实现同一套判重与补记规则。
+- **UI 入口**：设置抽屉「信件沉淀与批量导入」区（沉淀按钮 + 导入弹窗）、信件存档抽屉「沉淀入记忆」按钮；导入的信件在存档与后悔处带「导入」徽标。
+- **数据流**：导入 → 解析（`AppCore.parseLetters`）→ 写入信件存档（去重、按时间排序、上限 60）→ 自动沉淀进记忆（`distill_letters`，服务端不可用时降级到内嵌 `AppCore.distillLetters()`）→ 回写推断出的天气/心情与最终 id。
 
 ---
 

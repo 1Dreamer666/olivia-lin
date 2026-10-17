@@ -811,6 +811,21 @@ body::before {
   white-space: pre-wrap;
 }
 .import-status.error { color: #b84334; }
+.import-verify {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  background: color-mix(in srgb, var(--line) 18%, transparent);
+}
+.import-verify[hidden] { display: none; }
+.import-verify .cfg-hint { flex: 1 1 220px; font-size: 12px; line-height: 1.5; }
+.import-verify-actions { display: flex; gap: 8px; }
 .cfg-mem-tools { justify-content: flex-start; }
 
 /* ---------------- 响应式 ---------------- */
